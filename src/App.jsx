@@ -212,12 +212,15 @@ function EmptyState({icon,message,sub}){
 let _pdfjsPromise = null;
 function loadPdfjs() {
   if (!_pdfjsPromise) {
-    _pdfjsPromise = Promise.all([
-      import("pdfjs-dist"),
-      import("pdfjs-dist/build/pdf.worker.min.mjs?url")
-    ]).then(([lib, workerModule]) => {
-      lib.GlobalWorkerOptions.workerSrc = workerModule.default;
+    _pdfjsPromise = import("pdfjs-dist/legacy/build/pdf.mjs").then((lib) => {
+      lib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${lib.version || "4.10.38"}/pdf.worker.min.mjs`;
       return lib;
+    }).catch(() => {
+      // Fallback to standard import if legacy subpath is not exported
+      return import("pdfjs-dist").then((lib) => {
+        lib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${lib.version || "4.10.38"}/pdf.worker.min.mjs`;
+        return lib;
+      });
     });
   }
   return _pdfjsPromise;
