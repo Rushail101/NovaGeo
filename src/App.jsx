@@ -39,7 +39,6 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:14
 .btn-primary{background:var(--accent);color:#0d0d0d}.btn-primary:hover{background:var(--accent2)}
 .btn-ghost{background:transparent;color:var(--text2);border:1px solid var(--border2)}.btn-ghost:hover{color:var(--text);border-color:var(--border3)}
 .btn-danger{background:transparent;color:var(--red);border:1px solid #3a1a1a}.btn-danger:hover{background:#1e0a0a}
-.btn-info{background:transparent;color:var(--blue);border:1px solid #1a2e4a}.btn-info:hover{background:#0a1a2e}
 .btn-sm{padding:4px 10px;font-size:11.5px}
 .btn:disabled{opacity:.45;cursor:not-allowed}
 .stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px}
@@ -67,14 +66,14 @@ tr:last-child td{border-bottom:none}
 tr:hover td{background:rgba(255,255,255,.02)}
 .mono{font-family:var(--mono);font-size:11.5px}
 .badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:20px;font-size:10.5px;font-weight:500;font-family:var(--mono);text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}
-.badge-paid,.badge-green,.badge-ok,.badge-running,.badge-sale,.badge-pass{background:#0a2016;color:var(--green);border:1px solid #1a4028}
-.badge-partially_paid,.badge-amber,.badge-low,.badge-morning,.badge-conditional{background:#1a1500;color:var(--amber);border:1px solid #3a2e00}
-.badge-overdue,.badge-red,.badge-negative,.badge-breakdown,.badge-fail,.badge-rejected{background:#200808;color:var(--red);border:1px solid #401010}
-.badge-sent,.badge-blue,.badge-inward,.badge-produced,.badge-under-test{background:#081828;color:var(--blue);border:1px solid #143050}
-.badge-draft,.badge-muted,.badge-default,.badge-disposed{background:var(--bg3);color:var(--text3);border:1px solid var(--border)}
-.badge-teal,.badge-raw,.badge-receipt,.badge-released,.badge-retained{background:#051e1a;color:var(--teal);border:1px solid #0d3830}
-.badge-purple,.badge-transfer,.badge-dispatched{background:#100a28;color:var(--purple);border:1px solid #201848}
-.badge-accent,.badge-igst{background:#0d1a00;color:var(--accent);border:1px solid #1e3a00}
+.badge-green,.badge-pass,.badge-running,.badge-sale{background:#0a2016;color:var(--green);border:1px solid #1a4028}
+.badge-amber,.badge-conditional,.badge-low,.badge-morning{background:#1a1500;color:var(--amber);border:1px solid #3a2e00}
+.badge-red,.badge-fail,.badge-rejected,.badge-negative{background:#200808;color:var(--red);border:1px solid #401010}
+.badge-blue,.badge-under-test,.badge-inward{background:#081828;color:var(--blue);border:1px solid #143050}
+.badge-muted,.badge-disposed{background:var(--bg3);color:var(--text3);border:1px solid var(--border)}
+.badge-teal,.badge-released,.badge-retained{background:#051e1a;color:var(--teal);border:1px solid #0d3830}
+.badge-purple,.badge-dispatched{background:#100a28;color:var(--purple);border:1px solid #201848}
+.badge-accent{background:#0d1a00;color:var(--accent);border:1px solid #1e3a00}
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.8);display:flex;align-items:center;justify-content:center;z-index:200;padding:20px;backdrop-filter:blur(2px)}
 .modal{background:var(--bg2);border:1px solid var(--border2);border-radius:var(--r3);width:100%;max-width:600px;max-height:92vh;display:flex;flex-direction:column;box-shadow:var(--shadow2)}
 .modal-lg{max-width:820px}
@@ -87,37 +86,14 @@ tr:hover td{background:rgba(255,255,255,.02)}
 .form-row.cols-3{grid-template-columns:1fr 1fr 1fr}
 .form-group{display:flex;flex-direction:column;gap:5px}
 .form-group label{font-size:10.5px;color:var(--text2);letter-spacing:.05em;text-transform:uppercase;font-family:var(--mono);font-weight:500}
-.form-group input,.form-group select,.form-group textarea{background:var(--bg3);border:1px solid var(--border2);border-radius:var(--r);padding:8px 11px;color:var(--text);font-family:var(--font);font-size:13px;outline:none;transition:border-color .12s;width:100%}
+.form-group input,.form-group select,.form-group textarea{background:var(--bg3);border:1px solid var(--border2);border-radius:var(--r);padding:8px 11px;color:var(--text);font-family:var(--font);font-size:13px;outline:none;width:100%}
 .form-group input:focus,.form-group select:focus{border-color:var(--accent)}
 .form-note{font-size:10.5px;color:var(--text3);font-family:var(--mono);margin-top:2px}
 .empty{text-align:center;padding:48px 24px;color:var(--text3)}
 .empty-icon{font-size:32px;margin-bottom:12px}
-.alert-strip{background:#120a00;border:1px solid #3a2000;border-radius:var(--r2);padding:14px 18px;margin-bottom:20px}
-.alert-strip h4{font-size:11px;font-weight:700;color:var(--amber);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px}
-.two-col{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px}
-.row-detail{background:#141414;border-top:1px solid var(--border);padding:12px 18px;display:flex;gap:32px;flex-wrap:wrap}
-.row-detail-block label{font-size:9.5px;color:var(--text4);text-transform:uppercase;letter-spacing:.08em;font-family:var(--mono);display:block;margin-bottom:5px}
-.row-detail-block p{font-size:12px;color:var(--text2)}
+.filter-bar{display:flex;gap:10px;margin-bottom:16px;align-items:center;flex-wrap:wrap}
 .output-rows{display:flex;flex-direction:column;gap:8px}
 .output-row{display:grid;grid-template-columns:1fr 1fr auto;gap:8px;align-items:end}
-.filter-bar{display:flex;gap:10px;margin-bottom:16px;align-items:center;flex-wrap:wrap}
-.bar-row{margin-bottom:12px}
-.bar-row-header{display:flex;justify-content:space-between;margin-bottom:4px}
-.bar-row-header span{font-size:12px;color:var(--text2)}
-.bar-track{background:var(--bg4);border-radius:3px;height:4px}
-.bar-fill{height:100%;border-radius:3px;transition:width .4s}
-.maint-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r2);padding:16px 18px;margin-bottom:10px}
-.due-badge{font-size:10px;font-family:var(--mono);padding:3px 8px;border-radius:20px;font-weight:600}
-.due-badge.overdue{background:#200808;color:var(--red);border:1px solid #401010}
-.due-badge.due-today{background:#1a1500;color:var(--amber);border:1px solid #3a2e00}
-.due-badge.due-soon{background:#0a1500;color:#8aab20;border:1px solid #1e3a00}
-.due-badge.ok{background:var(--bg3);color:var(--text4);border:1px solid var(--border)}
-.maint-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:20px}
-.cost-row{display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--border)}
-.cost-row.grand{border-top:2px solid var(--border2);margin-top:4px;padding-top:12px}
-.cost-row.grand .cost-val{font-size:16px;font-weight:700;color:var(--accent)}
-.cost-label{font-size:12.5px;color:var(--text2)}
-.cost-val{font-family:var(--mono);font-size:12.5px;color:var(--text);text-align:right}
 .cpt-banner{background:#0a1a00;border:1px solid #1e3a00;border-radius:var(--r2);padding:16px 22px;display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
 .cpt-val{font-size:30px;font-weight:800;color:var(--accent);font-family:var(--mono)}
 .cpt-sub{font-size:11px;color:var(--text3);margin-top:3px;font-family:var(--mono)}
@@ -126,14 +102,6 @@ tr:hover td{background:rgba(255,255,255,.02)}
 .qc-param-card label{font-size:9.5px;color:var(--text3);text-transform:uppercase;font-family:var(--mono);display:block;margin-bottom:6px}
 .qc-param-card input{background:var(--bg4);border:1px solid var(--border2);border-radius:5px;padding:6px 9px;color:var(--text);font-family:var(--mono);font-size:13px;width:100%}
 .lot-chip{display:inline-flex;align-items:center;gap:5px;background:#0a1a00;border:1px solid #1e3a00;border-radius:var(--r);padding:3px 10px;font-family:var(--mono);font-size:11px;color:var(--accent)}
-.report-section{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r2);padding:20px 22px;margin-bottom:20px}
-.report-section h3{font-size:13px;font-weight:600;margin-bottom:16px}
-.mini-bar-row{display:flex;align-items:center;gap:10px;margin-bottom:8px}
-.mini-bar-row .label{font-size:11.5px;color:var(--text2);width:140px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0}
-.mini-bar-row .track{flex:1;background:var(--bg4);border-radius:3px;height:6px}
-.mini-bar-row .fill{height:100%;border-radius:3px}
-.mini-bar-row .val{font-size:11px;font-family:var(--mono);color:var(--text3);width:80px;text-align:right;flex-shrink:0}
-.expense-cat-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px}
 .config-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r2);padding:18px 20px;margin-bottom:16px}
 .config-card h3{font-size:13px;font-weight:600;margin-bottom:14px}
 .config-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}
@@ -148,14 +116,6 @@ const fmt = n => `₹${(+n||0).toLocaleString("en-IN",{minimumFractionDigits:2,m
 const today = () => new Date().toISOString().split("T")[0];
 const nowTime = () => new Date().toTimeString().slice(0,5);
 const addDays = (dStr, n) => { const d = new Date(dStr); d.setDate(d.getDate()+n); return d.toISOString().split("T")[0]; };
-const getFY = dStr => {
-  if (!dStr) return "";
-  const d = new Date(dStr); const y = d.getFullYear(), m = d.getMonth()+1;
-  const s = m >= 4 ? y : y - 1;
-  return `${s}-${String((s + 1) % 100).padStart(2, "0")}`;
-};
-const currentFY = () => getFY(today());
-const fyRange = fy => { const s = +fy.split("-")[0]; return { start: `${s}-04-01`, end: `${s+1}-03-31` }; };
 const calcNextDue = (lastDone, type, val) => {
   if (!lastDone) return today();
   const n = +val || 1; const d = new Date(lastDone);
@@ -164,7 +124,6 @@ const calcNextDue = (lastDone, type, val) => {
   if (type === "monthly") d.setMonth(d.getMonth() + n);
   return d.toISOString().split("T")[0];
 };
-const daysDiff = dStr => Math.ceil((new Date(dStr) - new Date(today())) / (1000*60*60*24));
 
 function computeStock(grades, receipts, entries, weighments) {
   const s = {};
@@ -216,7 +175,6 @@ function loadPdfjs() {
       lib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${lib.version || "4.10.38"}/pdf.worker.min.mjs`;
       return lib;
     }).catch(() => {
-      // Fallback to standard import if legacy subpath is not exported
       return import("pdfjs-dist").then((lib) => {
         lib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${lib.version || "4.10.38"}/pdf.worker.min.mjs`;
         return lib;
@@ -330,25 +288,25 @@ function guessCol(headers, patterns) {
 }
 
 const EXP_CATS = [
-  { id:"fuel", label:"Fuel & Diesel", color:"#f5a623" },
-  { id:"salary", label:"Staff Salaries", color:"#5ca0ff" },
-  { id:"labour", label:"Contract / Casual Labour", color:"#7aa8ff" },
-  { id:"maint", label:"Maintenance", color:"#a78bfa" },
-  { id:"royalty", label:"Royalty / Levy", color:"#2dd4bf" },
-  { id:"electric", label:"Electricity", color:"#4ecb71" },
-  { id:"water", label:"Water", color:"#3fa9d6" },
-  { id:"transport", label:"Transport", color:"#ff5c5c" },
-  { id:"misc", label:"Miscellaneous", color:"#999" },
+  { id:"fuel", label:"Fuel & Diesel" },
+  { id:"salary", label:"Staff Salaries" },
+  { id:"labour", label:"Contract / Casual Labour" },
+  { id:"maint", label:"Maintenance" },
+  { id:"royalty", label:"Royalty / Levy" },
+  { id:"electric", label:"Electricity" },
+  { id:"water", label:"Water" },
+  { id:"transport", label:"Transport" },
+  { id:"misc", label:"Miscellaneous" },
 ];
 const OPS_CATS = ["electric","water","salary","labour","fuel","maint","transport","misc"];
 const CAP_CATS = [
-  { id:"machinery", label:"Machinery & Equipment", color:"#c8f064" },
-  { id:"civil", label:"Land / Civil / Construction", color:"#a78bfa" },
-  { id:"vehicle", label:"Vehicles", color:"#5ca0ff" },
-  { id:"license", label:"Licenses & Registration", color:"#2dd4bf" },
-  { id:"deposit", label:"Deposits & Utility Setup", color:"#f5a623" },
-  { id:"office", label:"Furniture & Office Setup", color:"#ff5c5c" },
-  { id:"other", label:"Other Capital Spend", color:"#999" },
+  { id:"machinery", label:"Machinery & Equipment" },
+  { id:"civil", label:"Land / Civil / Construction" },
+  { id:"vehicle", label:"Vehicles" },
+  { id:"license", label:"Licenses & Registration" },
+  { id:"deposit", label:"Deposits & Utility Setup" },
+  { id:"office", label:"Furniture & Office Setup" },
+  { id:"other", label:"Other Capital Spend" },
 ];
 const CP_TYPES = [
   { id:"unlabeled", label:"Unlabeled" }, { id:"vendor", label:"Vendor / Supplier" },
@@ -392,6 +350,7 @@ const NAV = [
   { id:"capital", label:"Capital / Infra", icon:"🏗", group:"Reports" },
   { id:"bankstatement", label:"Bank Statement", icon:"🏦", group:"Reports" },
   { id:"partners", label:"Partners & Capital", icon:"🤝", group:"Reports" },
+  { id:"partnercashbook", label:"Partner Cashbook", icon:"📖", group:"Reports" },
   { id:"rpt-daily", label:"Daily Report", icon:"📅", group:"Reports" },
   { id:"rpt-stock", label:"Stock Report", icon:"📦", group:"Reports" },
   { id:"vehicles", label:"Vehicles", icon:"◉", group:"Masters" },
@@ -429,8 +388,8 @@ export default function App() {
   const [costConfig, setCostConfig] = useState({});
   const [qcTests, setQcTests] = useState([]);
   const [samples, setSamples] = useState([]);
+  const [partnerCashbook, setPartnerCashbook] = useState([]);
 
-  // Supabase Bootstrap
   useEffect(() => {
     async function init() {
       try {
@@ -442,6 +401,7 @@ export default function App() {
         setPurchases(d.purchases); setExpenses(d.expenses); setCapitalItems(d.capitalItems);
         setBankBatches(d.bankBatches); setBankTxns(d.bankTxns); setBankLabels(d.bankLabels);
         setCostConfig(d.costConfig); setQcTests(d.qcTests); setSamples(d.samples);
+        setPartnerCashbook(d.partnerCashbook);
       } catch (err) {
         console.error("Failed to load records from Supabase:", err);
       } finally {
@@ -456,7 +416,7 @@ export default function App() {
   if (loading) {
     return (
       <div style={{ display:"flex", alignItems:"center", justifyContent:"center", minHeight:"100vh", background:"var(--bg)", color:"var(--accent)", fontFamily:"monospace" }}>
-        Loading ERP Database...
+        Connecting to Cloud Database...
       </div>
     );
   }
@@ -490,7 +450,7 @@ export default function App() {
               </div>
             ))}
           </nav>
-          <div className="sidebar-foot">BallMill ERP · Cloud Active</div>
+          <div className="sidebar-foot">BallMill ERP · Cloud Sync</div>
         </aside>
         <div className="main">
           <div className="topbar">
@@ -500,7 +460,7 @@ export default function App() {
             </div>
             <div className="topbar-right">
               <span className="mono" style={{ fontSize:11, color:"var(--text3)" }}>{today()}</span>
-              <Badge type="accent">Online</Badge>
+              <Badge type="accent">Live</Badge>
             </div>
           </div>
           <div className="content">
@@ -523,8 +483,9 @@ export default function App() {
             {view === "opscosts" && <MonthlyOpsCosts {...{ expenses, setExpenses }} />}
             {view === "expenses" && <ExpensesView {...{ expenses, setExpenses }} />}
             {view === "capital" && <CapitalRegister {...{ capitalItems, setCapitalItems }} />}
-            {view === "bankstatement" && <BankStatementGrouping {...{ bankBatches, setBankBatches, bankTxns, setBankTxns, bankLabels, setBankLabels, setCapitalItems }} />}
+            {view === "bankstatement" && <BankStatementGrouping {...{ bankBatches, setBankBatches, bankTxns, setBankTxns, bankLabels, setBankLabels, setCapitalItems, setExpenses, setPartnerCashbook }} />}
             {view === "partners" && <PartnersCapitalDashboard {...{ bankTxns, bankLabels }} />}
+            {view === "partnercashbook" && <PartnerCashbookView {...{ partnerCashbook, bankLabels }} />}
             {view === "rpt-daily" && <DailyReport {...{ weighments, productionEntries, boulderReceipts, expenses, grades }} />}
             {view === "rpt-stock" && <StockReport {...{ grades, boulderReceipts, productionEntries, weighments }} />}
             {view === "vehicles" && <MasterPage title="Vehicles" noun="Vehicle" icon="🚛" items={vehicles} setItems={setVehicles} saveFn={db.saveVehicle} delFn={db.deleteVehicle} fields={[{ key:"vehicleNo", label:"Vehicle Number", required:true },{ key:"type", label:"Type", type:"select", options:["Tipper","Dumper","Truck","Other"] },{ key:"tareWeight", label:"Tare Weight (kg)", type:"number", required:true },{ key:"owner", label:"Owner" },{ key:"phone", label:"Phone" }]} cols={[{ label:"Vehicle #", key:"vehicleNo" },{ label:"Type", key:"type" },{ label:"Tare Wt", render:r=>fmtWt(r.tareWeight), r:true },{ label:"Owner", key:"owner" }]} />}
@@ -538,7 +499,7 @@ export default function App() {
   );
 }
 
-// ── MODULAR VIEWS ─────────────────────────────────────────────────────────────
+// ── VIEWS ─────────────────────────────────────────────────────────────────────
 
 function WeighmentEntry({ vehicles, customers, grades, weighments, setWeighments }) {
   const [open, setOpen] = useState(false);
@@ -1332,57 +1293,56 @@ function CapitalRegister({ capitalItems, setCapitalItems }) {
   );
 }
 
-function BankStatementGrouping({ bankBatches, setBankBatches, bankTxns, setBankTxns, bankLabels, setBankLabels, setCapitalItems }) {
+function BankStatementGrouping({ bankBatches, setBankBatches, bankTxns, setBankTxns, bankLabels, setBankLabels, setCapitalItems, setExpenses, setPartnerCashbook }) {
   const [sheet, setSheet] = useState(null);
   const [map, setMap] = useState({ dateCol:"", descCol:"", mode:"separate", debitCol:"", creditCol:"", amountCol:"" });
   const [expanded, setExpanded] = useState(null);
 
   async function onFile(e) {
-  const file = e.target.files[0];
-  if (!file) return;
-  e.target.value = "";
+    const file = e.target.files[0];
+    if (!file) return;
+    e.target.value = "";
 
-  if (file.name.toLowerCase().endsWith(".pdf")) {
-    try {
-      const parsedSheet = await parsePdfStatement(file);
-      setSheet(parsedSheet);
-      // Auto-populate map with the columns generated by parsePdfStatement
-      setMap({
-        dateCol: "Date",
-        descCol: "Narration",
-        mode: "separate",
-        debitCol: "Withdrawal Amt",
-        creditCol: "Deposit Amt",
-        amountCol: "",
-      });
-    } catch (err) {
-      alert("PDF Error: " + err.message);
+    if (file.name.toLowerCase().endsWith(".pdf")) {
+      try {
+        const parsedSheet = await parsePdfStatement(file);
+        setSheet(parsedSheet);
+        setMap({
+          dateCol: "Date",
+          descCol: "Narration",
+          mode: "separate",
+          debitCol: "Withdrawal Amt",
+          creditCol: "Deposit Amt",
+          amountCol: "",
+        });
+      } catch (err) {
+        alert("PDF Error: " + err.message);
+      }
+      return;
     }
-    return;
+
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try {
+        const wb = XLSX.read(ev.target.result, { type: "array" });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
+        const headers = Object.keys(rows[0] || {});
+        setSheet({ headers, rows, fileName: file.name });
+        setMap({
+          dateCol: guessCol(headers, ["date"]),
+          descCol: guessCol(headers, ["narration", "description", "particular"]),
+          mode: "separate",
+          debitCol: guessCol(headers, ["debit", "withdrawal"]),
+          creditCol: guessCol(headers, ["credit", "deposit"]),
+          amountCol: guessCol(headers, ["amount"]),
+        });
+      } catch (err) {
+        alert("File read error: " + err.message);
+      }
+    };
+    reader.readAsArrayBuffer(file);
   }
-
-  const reader = new FileReader();
-  reader.onload = ev => {
-    try {
-      const wb = XLSX.read(ev.target.result, { type: "array" });
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
-      const headers = Object.keys(rows[0] || {});
-      setSheet({ headers, rows, fileName: file.name });
-      setMap({
-        dateCol: guessCol(headers, ["date"]),
-        descCol: guessCol(headers, ["narration", "description", "particular"]),
-        mode: "separate",
-        debitCol: guessCol(headers, ["debit", "withdrawal"]),
-        creditCol: guessCol(headers, ["credit", "deposit"]),
-        amountCol: guessCol(headers, ["amount"]),
-      });
-    } catch (err) {
-      alert("File read error: " + err.message);
-    }
-  };
-  reader.readAsArrayBuffer(file);
-}
 
   async function importRows() {
     if (!sheet || !map.dateCol || !map.descCol) return alert("Select required mapping columns");
@@ -1425,6 +1385,22 @@ function BankStatementGrouping({ bankBatches, setBankBatches, bankTxns, setBankT
       const item = await db.promoteTxnToCapital(t, "machinery", "own");
       setCapitalItems(cs => [item, ...cs]);
       alert(`Promoted transaction ${t.description} to Capital / Infra!`);
+    } catch (err) { alert(err.message); }
+  }
+
+  async function promoteToExpense(t) {
+    try {
+      const exp = await db.promoteTxnToExpense(t, "misc");
+      setExpenses(es => [exp, ...es]);
+      alert(`Promoted transaction ${t.description} to Expenses!`);
+    } catch (err) { alert(err.message); }
+  }
+
+  async function logCashbook(t, partnerName, type) {
+    try {
+      const entry = await db.logPartnerCashbookEntry(t, partnerName, type);
+      setPartnerCashbook(cb => [entry, ...cb]);
+      alert(`Logged ${type} of ${fmt(entry.amount)} for ${partnerName}`);
     } catch (err) { alert(err.message); }
   }
 
@@ -1481,14 +1457,29 @@ function BankStatementGrouping({ bankBatches, setBankBatches, bankTxns, setBankT
             {expanded === g.key && (
               <div className="table-wrap" style={{ marginTop: 10 }}>
                 <table>
-                  <thead><tr><th>Date</th><th>Narration</th><th className="r">Debit</th><th className="r">Credit</th><th>Promote</th></tr></thead>
+                  <thead><tr><th>Date</th><th>Narration</th><th className="r">Debit</th><th className="r">Credit</th><th className="r">Actions</th></tr></thead>
                   <tbody>
                     {g.txns.map(t => (
                       <tr key={t.id}>
                         <td className="mono">{t.date}</td><td>{t.description}</td>
                         <td className="r mono" style={{ color:"var(--red)" }}>{t.debit > 0 ? fmt(t.debit) : "—"}</td>
                         <td className="r mono" style={{ color:"var(--green)" }}>{t.credit > 0 ? fmt(t.credit) : "—"}</td>
-                        <td>{t.debit > 0 && <button className="btn btn-ghost btn-sm" onClick={() => promoteToCapital(t)}>+ Capital</button>}</td>
+                        <td className="r">
+                          <div style={{ display:"flex", gap:4, justifyContent:"flex-end" }}>
+                            {t.credit > 0 && g.type === "owner" && (
+                              <button className="btn btn-primary btn-sm" onClick={() => logCashbook(t, g.label || g.key, "Capital Infusion")}>+ Equity</button>
+                            )}
+                            {t.debit > 0 && (
+                              <>
+                                <button className="btn btn-ghost btn-sm" title="Push to Capital" onClick={() => promoteToCapital(t)}>+ Cap</button>
+                                <button className="btn btn-ghost btn-sm" title="Push to Expenses" onClick={() => promoteToExpense(t)}>+ Exp</button>
+                                {g.type === "owner" && (
+                                  <button className="btn btn-danger btn-sm" title="Log Drawing" onClick={() => logCashbook(t, g.label || g.key, "Drawings")}>+ Draw</button>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -1534,6 +1525,68 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels }) {
                 <td className="r mono" style={{ color:"var(--accent)", fontWeight:700 }}>{fmt(p.credit)}</td>
               </tr>
             ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function PartnerCashbookView({ partnerCashbook, bankLabels }) {
+  const [selPartner, setSelPartner] = useState("All");
+
+  const partners = useMemo(() => {
+    const set = new Set();
+    Object.values(bankLabels).forEach(l => {
+      if (l.type === "owner" && l.label) set.add(l.label);
+    });
+    partnerCashbook.forEach(e => set.add(e.partnerName));
+    return ["All", ...Array.from(set)];
+  }, [bankLabels, partnerCashbook]);
+
+  const filtered = useMemo(() => {
+    return selPartner === "All"
+      ? partnerCashbook
+      : partnerCashbook.filter(e => e.partnerName === selPartner);
+  }, [partnerCashbook, selPartner]);
+
+  const totalInfusions = filtered.filter(e => e.type === "Capital Infusion").reduce((s, e) => s + e.amount, 0);
+  const totalDrawings = filtered.filter(e => e.type === "Drawings" || e.type === "Expense Reimbursement").reduce((s, e) => s + e.amount, 0);
+  const netStanding = totalInfusions - totalDrawings;
+
+  return (
+    <div>
+      <div className="filter-bar">
+        <FG label="Partner Filter">
+          <select value={selPartner} onChange={e => setSelPartner(e.target.value)}>
+            {partners.map(p => <option key={p} value={p}>{p}</option>)}
+          </select>
+        </FG>
+      </div>
+      <div className="stats-grid">
+        <StatCard label="Total Infusions" value={fmt(totalInfusions)} color="accent" />
+        <StatCard label="Total Withdrawals" value={fmt(totalDrawings)} color="red" />
+        <StatCard label="Net Capital Standing" value={fmt(netStanding)} color={netStanding >= 0 ? "green" : "amber"} />
+      </div>
+      <div className="table-wrap">
+        <table>
+          <thead><tr><th>Date</th><th>Partner</th><th>Type</th><th>Narration / Remarks</th><th className="r">Amount</th></tr></thead>
+          <tbody>
+            {filtered.length === 0 ? (
+              <tr><td colSpan={5}><EmptyState icon="🤝" message="No cashbook entries logged yet" /></td></tr>
+            ) : (
+              filtered.map(e => (
+                <tr key={e.id}>
+                  <td className="mono" style={{ fontSize:11, color:"var(--text3)" }}>{e.entryDate}</td>
+                  <td style={{ fontWeight: 600 }}>{e.partnerName}</td>
+                  <td><Badge type={e.type === "Capital Infusion" ? "green" : "red"}>{e.type}</Badge></td>
+                  <td>{e.remarks}</td>
+                  <td className="r mono" style={{ fontWeight: 700, color: e.type === "Capital Infusion" ? "var(--green)" : "var(--red)" }}>
+                    {e.type === "Capital Infusion" ? "+" : "-"}{fmt(e.amount)}
+                  </td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>
