@@ -938,6 +938,39 @@ function CapitalRegisterView({ capitalItems, setCapitalItems }) {
 }
 
 // ── 6. BANK STATEMENT GROUPING VIEW (RESTORED CLEAN CARDS) ───────────────────
+// Keeps local input state while typing so the card doesn't re-key and drop focus
+function CounterpartyNameInput({ rawKeys, currentLabel, placeholder, onSave }) {
+  const [val, setVal] = useState(currentLabel || "");
+
+  // Sync if parent updates from outside
+  useEffect(() => {
+    setVal(currentLabel || "");
+  }, [currentLabel]);
+
+  function commit() {
+    if (val !== currentLabel) {
+      onSave(rawKeys, { label: val.trim() });
+    }
+  }
+
+  function handleKeyDown(e) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      e.target.blur(); // Triggers commit via onBlur
+    }
+  }
+
+  return (
+    <input
+      placeholder={placeholder}
+      value={val}
+      onChange={e => setVal(e.target.value)}
+      onBlur={commit}
+      onKeyDown={handleKeyDown}
+      title="Press Enter or click outside to save"
+    />
+  );
+}
 function BankStatementGroupingView({ bankBatches, setBankBatches, bankTxns, setBankTxns, bankLabels, setBankLabels, setCapitalItems, setExpenses, setPartnerCashbook }) {
   const [sheet, setSheet] = useState(null);
   const [map, setMap] = useState({ dateCol:"", descCol:"", mode:"separate", debitCol:"", creditCol:"", amountCol:"" });
