@@ -1202,28 +1202,28 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPa
   const [activeTab, setActiveTab] = useState("overview"); // 'overview' | 'ledger'
   const [selectedPartner, setSelectedPartner] = useState("All");
   const [openCashModal, setOpenCashModal] = useState(false);
-  const [openActionModal, setOpenActionModal] = useState(null);
+  const [openActionModal, setOpenActionModal] = useState(null); // { partner, type }
 
-  // 1. Recreate the EXACT same merged groups engine as the Bank Statement cards
+  // 1. Recreate the EXACT same merged groups calculation engine as Bank Statement cards
   const bankPartnerGroups = useMemo(() => {
-    // Bucket transactions by raw key
     const rawMap = {};
     (bankTxns || []).forEach(t => {
-      const k = t.key || t.group_key || normalizeDesc(t.description);
+      if (!t) return;
+      // Key can be t.key, t.group_key, or normalized description fallback
+      const k = t.key || t.group_key || (t.description ? normalizeDesc(t.description) : "UNKNOWN");
       if (!rawMap[k]) rawMap[k] = { key: k, txns: [], totalDebit: 0, totalCredit: 0 };
       rawMap[k].txns.push(t);
       rawMap[k].totalDebit += (+t.debit || 0);
       rawMap[k].totalCredit += (+t.credit || 0);
     });
 
-    // Merge by user-typed label
     const merged = {};
     Object.values(rawMap).forEach(g => {
       const meta = (bankLabels || {})[g.key] || {};
       const type = meta.type || "unlabeled";
       const label = (meta.label || "").trim();
 
-      // Only consider groups tagged as Owner / Capital
+      // Filter groups classified as Owner / Capital
       if (type === "owner" && label) {
         const mergeKey = label.toLowerCase();
         if (!merged[mergeKey]) {
@@ -1243,7 +1243,7 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPa
     return merged;
   }, [bankTxns, bankLabels]);
 
-  // 2. Discover all partner names (from Bank Statement Owner cards + Manual Cashbook entries)
+  // 2. Discover all partner names (from Owner cards and manual cashbook entries)
   const partners = useMemo(() => {
     const s = new Set();
     Object.values(bankPartnerGroups).forEach(g => s.add(g.displayName));
@@ -1253,12 +1253,11 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPa
     return Array.from(s);
   }, [bankPartnerGroups, partnerCashbook]);
 
-  // 3. Roll up summary for every partner
+  // 3. Roll up summary per partner combining bank statement movements & manual entries
   const partnerSummaries = useMemo(() => {
     return partners.map(name => {
       const bankGroup = bankPartnerGroups[name.toLowerCase()] || { totalCredit: 0, totalDebit: 0, txns: [] };
 
-      // Sum any direct cash / off-book entries from partner_cashbook
       const cashbookRecords = (partnerCashbook || []).filter(
         e => e && e.partnerName && e.partnerName.trim().toLowerCase() === name.toLowerCase()
       );
@@ -1275,13 +1274,13 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPa
         .filter(e => e.type === "Direct Cash Expense" || e.type === "Expense Reimbursement")
         .reduce((sum, e) => sum + (+e.amount || 0), 0);
 
-      // Total Capital = Bank Inward Deposits (e.g. ₹47,00,000) + Any Manual Cash Additions
+      // Total Capital = Bank Inward Deposits + Manual Off-Book Infusions
       const capitalInjected = bankGroup.totalCredit + manualInfusions;
 
-      // Total Drawings = Bank Withdrawals by Partner + Manual Cash Drawings
+      // Total Drawings = Bank Withdrawals by Partner + Manual Drawings
       const drawingsTaken = bankGroup.totalDebit + manualDrawings;
 
-      // Net Equity = (Capital + Site Expenses) - Drawings
+      // Net Standing = (Capital + Site Expenses) - Drawings
       const netStanding = (capitalInjected + cashSpentOnSite) - drawingsTaken;
 
       return {
@@ -1293,6 +1292,317 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPa
       };
     }).sort((a, b) => b.capitalInjected - a.capitalInjected);
   }, [partners, bankPartnerGroups, partnerCashbook]);
+
+  const totalCapitalAll = partnerSummaries.reduce((s, p) => s + p.capitalInjected, 0);
+  const totalCashSpentAll = partnerSummaries.reduce((s, p) => s + p.cashSpentOnSite, 0);
+  const totalDrawingsAll = partnerSummaries.reduce((s, p) => s + p.drawingsTaken, 0);
+
+  // Form state for direct site cash spend
+  const [cf, setCf] = useState({
+    partnerName: "",
+    date: today(),
+    amount: "",
+    isCapex: false,
+    category: "misc",
+    description: "",
+    ref: "",
+  });
+
+  useEffect(() => {
+    if (!cf.partnerName && partners.length > 0) {
+      setCf(prev => ({ ...prev, partnerName: partners[0] }));
+    }
+  }, [partners, cf.partnerName]);
+
+  async function handleDirectCashSubmit() {
+    if (!cf.partnerName || !cf.amount || !cf.description) {
+      return alert("Partner name, amount, and description are required.");
+    }
+    try {
+      const res = await db.recordPartnerDirectCashExpense(
+        cf.partnerName, cf.date, cf.category, cf.amount, cf.description, cf.ref, cf.isCapex
+      );
+      setPartnerCashbook(prev => [res.cashbookEntry, ...(prev || [])]);
+      if (res.isCapex) setCapitalItems(prev => [res.item, ...(prev || [])]);
+      else setExpenses(prev => [res.item, ...(prev || [])]);
+      setOpenCashModal(false);
+      setCf({ partnerName: partners[0] || "", date: today(), amount: "", isCapex: false, category: "misc", description: "", ref: "" });
+      alert(`Logged ${fmt(cf.amount)} paid by ${cf.partnerName}!`);
+    } catch (err) { alert(err.message); }
+  }
+
+  // Quick Action Modal state (Direct Infusion / Drawing)
+  const [quickForm, setQuickForm] = useState({ date: today(), amount: "", remarks: "" });
+  async function handleQuickActionSubmit() {
+    if (!quickForm.amount) return alert("Amount is required.");
+    try {
+      const entry = await db.savePartnerCashbookEntry({
+        partnerName: openActionModal.partner,
+        entryDate: quickForm.date,
+        accountType: openActionModal.type === "Capital Infusion" ? "capital" : "current",
+        type: openActionModal.type,
+        amount: +quickForm.amount,
+        paymentMode: "cash",
+        remarks: quickForm.remarks || `${openActionModal.type} recorded directly`,
+      });
+      setPartnerCashbook(prev => [entry, ...(prev || [])]);
+      setOpenActionModal(null);
+      setQuickForm({ date: today(), amount: "", remarks: "" });
+    } catch (err) { alert(err.message); }
+  }
+
+  // Transaction ledger rows: combines individual bank transactions for owner groups with manual cashbook records
+  const ledgerRows = useMemo(() => {
+    const list = [];
+
+    // Bank transactions linked to owner groups
+    (bankTxns || []).forEach(t => {
+      if (!t) return;
+      const k = t.key || t.group_key || (t.description ? normalizeDesc(t.description) : "");
+      const meta = (bankLabels || {})[k];
+      if (meta && meta.type === "owner" && meta.label) {
+        const pName = meta.label.trim();
+        if (selectedPartner === "All" || pName.toLowerCase() === selectedPartner.toLowerCase()) {
+          list.push({
+            id: `bank-${t.id}`,
+            entryDate: t.date || t.txn_date,
+            partnerName: pName,
+            accountType: t.credit > 0 ? "capital" : "current",
+            type: t.credit > 0 ? "Capital Infusion" : "Drawings",
+            remarks: t.description,
+            paymentMode: "bank",
+            amount: t.credit > 0 ? +t.credit : +t.debit,
+          });
+        }
+      }
+    });
+
+    // Off-book manual cashbook entries
+    (partnerCashbook || []).forEach(e => {
+      if (!e || e.bankTxnId) return; // avoid double counting if linked to a bank txn
+      if (selectedPartner === "All" || (e.partnerName && e.partnerName.toLowerCase() === selectedPartner.toLowerCase())) {
+        list.push({
+          id: `cb-${e.id}`,
+          entryDate: e.entryDate,
+          partnerName: e.partnerName,
+          accountType: e.accountType || "current",
+          type: e.type,
+          remarks: e.remarks,
+          paymentMode: e.paymentMode || "cash",
+          amount: +e.amount,
+        });
+      }
+    });
+
+    return list.sort((a, b) => (b.entryDate || "").localeCompare(a.entryDate || ""));
+  }, [bankTxns, bankLabels, partnerCashbook, selectedPartner]);
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
+        <div className="pill-tabs">
+          <button className={`pill-tab ${activeTab === "overview" ? "active" : ""}`} onClick={() => setActiveTab("overview")}>
+            Partner Equity & Summaries
+          </button>
+          <button className={`pill-tab ${activeTab === "ledger" ? "active" : ""}`} onClick={() => setActiveTab("ledger")}>
+            Transaction Ledger ({ledgerRows.length})
+          </button>
+        </div>
+
+        <button className="btn btn-primary" onClick={() => setOpenCashModal(true)}>
+          + Record Cash Spent by Partner
+        </button>
+      </div>
+
+      <div className="stats-grid">
+        <StatCard label="Total Capital Infused" value={fmt(totalCapitalAll)} color="accent" sub="Core Equity" />
+        <StatCard label="Direct Cash Spent on Site" value={fmt(totalCashSpentAll)} color="green" sub="Paid On Behalf" />
+        <StatCard label="Drawings / Withdrawals" value={fmt(totalDrawingsAll)} color="red" sub="Taken Out" />
+        <StatCard label="Net Firm Obligation" value={fmt((totalCapitalAll + totalCashSpentAll) - totalDrawingsAll)} color="blue" sub="Total Net Standing" />
+      </div>
+
+      {activeTab === "overview" ? (
+        <div className="table-wrap">
+          <div className="table-toolbar">
+            <h3>Partner Accounts Summary</h3>
+            <span style={{ fontSize: 11, color: "var(--text3)" }}>{partners.length} registered partner(s)</span>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Partner Name</th>
+                <th className="r">Capital Contributed</th>
+                <th className="r">Cash Spent on Site</th>
+                <th className="r">Drawings / Salary Taken</th>
+                <th className="r">Net Equity Standing</th>
+                <th className="r">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {partnerSummaries.length === 0 ? (
+                <tr>
+                  <td colSpan={6} style={{ textAlign: "center", color: "var(--text3)", padding: 32 }}>
+                    <EmptyState 
+                      icon="🤝" 
+                      message="No partners detected yet" 
+                      sub="Tag counterparties as 'Owner / Capital' in Bank Statement, or click '+ Record Cash Spent by Partner' above." 
+                    />
+                  </td>
+                </tr>
+              ) : (
+                partnerSummaries.map(p => (
+                  <tr key={p.name}>
+                    <td style={{ fontWeight: 600 }}>{p.name}</td>
+                    <td className="r mono" style={{ color: "var(--accent)", fontWeight: 700 }}>{fmt(p.capitalInjected)}</td>
+                    <td className="r mono" style={{ color: "var(--green)" }}>{fmt(p.cashSpentOnSite)}</td>
+                    <td className="r mono" style={{ color: "var(--red)" }}>{fmt(p.drawingsTaken)}</td>
+                    <td className="r mono" style={{ fontWeight: 700, fontSize: 13, color: p.netStanding >= 0 ? "var(--teal)" : "var(--amber)" }}>
+                      {fmt(p.netStanding)}
+                    </td>
+                    <td className="r">
+                      <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                        <button 
+                          className="btn btn-ghost btn-sm" 
+                          onClick={() => setOpenActionModal({ partner: p.name, type: "Capital Infusion" })}
+                        >
+                          + Capital
+                        </button>
+                        <button 
+                          className="btn btn-danger btn-sm" 
+                          onClick={() => setOpenActionModal({ partner: p.name, type: "Drawings" })}
+                        >
+                          + Draw
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div>
+          <div className="filter-bar">
+            <FG label="Filter by Partner">
+              <select value={selectedPartner} onChange={e => setSelectedPartner(e.target.value)}>
+                <option value="All">All Partners</option>
+                {partners.map(p => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </FG>
+          </div>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Partner</th>
+                  <th>Account</th>
+                  <th>Type</th>
+                  <th>Narration / Remarks</th>
+                  <th>Channel</th>
+                  <th className="r">Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ledgerRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} style={{ textAlign: "center", color: "var(--text3)", padding: 32 }}>
+                      <EmptyState icon="📖" message="No ledger transactions found" />
+                    </td>
+                  </tr>
+                ) : (
+                  ledgerRows.map(e => (
+                    <tr key={e.id}>
+                      <td className="mono">{e.entryDate}</td>
+                      <td style={{ fontWeight: 600 }}>{e.partnerName}</td>
+                      <td><BadgeComponent type={e.accountType === "capital" ? "accent" : "muted"}>{e.accountType}</BadgeComponent></td>
+                      <td><BadgeComponent type={e.type === "Drawings" ? "red" : "green"}>{e.type}</BadgeComponent></td>
+                      <td style={{ fontSize: 12 }}>{e.remarks}</td>
+                      <td><BadgeComponent type="muted">{e.paymentMode}</BadgeComponent></td>
+                      <td className="r mono" style={{ fontWeight: 700, color: e.type === "Drawings" ? "var(--red)" : "var(--green)" }}>
+                        {e.type === "Drawings" ? "-" : "+"}{fmt(e.amount)}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 1: Direct Cash Spent on Site by Partner */}
+      {openCashModal && (
+        <Modal 
+          title="Record Site Cash Expense Paid by Partner" 
+          onClose={() => setOpenCashModal(false)} 
+          foot={<><button className="btn btn-ghost" onClick={() => setOpenCashModal(false)}>Cancel</button><button className="btn btn-primary" onClick={handleDirectCashSubmit}>Save Entry</button></>}
+        >
+          <div className="form-row cols-2">
+            <FG label="Partner Name *">
+              {partners.length > 0 ? (
+                <input 
+                  list="partner-suggestions" 
+                  value={cf.partnerName} 
+                  placeholder="Select or type partner name"
+                  onChange={e => setCf({ ...cf, partnerName: e.target.value })} 
+                />
+              ) : (
+                <input 
+                  placeholder="Enter partner name" 
+                  value={cf.partnerName} 
+                  onChange={e => setCf({ ...cf, partnerName: e.target.value })} 
+                />
+              )}
+              <datalist id="partner-suggestions">
+                {partners.map(p => <option key={p} value={p} />)}
+              </datalist>
+            </FG>
+            <FG label="Date *"><input type="date" value={cf.date} onChange={e => setCf({ ...cf, date: e.target.value })} /></FG>
+          </div>
+          <div className="form-row cols-2">
+            <FG label="Amount Paid (₹) *"><input type="number" value={cf.amount} onChange={e => setCf({ ...cf, amount: e.target.value })} /></FG>
+            <FG label="Expense Nature">
+              <select value={cf.isCapex ? "capex" : "opex"} onChange={e => setCf({ ...cf, isCapex: e.target.value === "capex" })}>
+                <option value="opex">Operational Overhead (Site Fuel, Spares, Cash Labor)</option>
+                <option value="capex">Fixed Asset / Land (Civil Work, Machinery Advance)</option>
+              </select>
+            </FG>
+          </div>
+          <div className="form-row cols-2">
+            <FG label="Category">
+              <select value={cf.category} onChange={e => setCf({ ...cf, category: e.target.value })}>
+                {(cf.isCapex ? CAP_CATS : EXP_CATS).map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+              </select>
+            </FG>
+            <FG label="Voucher / Cash Memo Ref"><input value={cf.ref} onChange={e => setCf({ ...cf, ref: e.target.value })} /></FG>
+          </div>
+          <div className="form-row">
+            <FG label="Description *"><input placeholder="e.g. Paid cash for JCB land leveling or motor rewinding" value={cf.description} onChange={e => setCf({ ...cf, description: e.target.value })} /></FG>
+          </div>
+        </Modal>
+      )}
+
+      {/* MODAL 2: Quick Capital Infusion or Drawing */}
+      {openActionModal && (
+        <Modal 
+          title={`${openActionModal.type}: ${openActionModal.partner}`} 
+          onClose={() => setOpenActionModal(null)} 
+          foot={<><button className="btn btn-ghost" onClick={() => setOpenActionModal(null)}>Cancel</button><button className="btn btn-primary" onClick={handleQuickActionSubmit}>Record</button></>}
+        >
+          <div className="form-row cols-2">
+            <FG label="Date"><input type="date" value={quickForm.date} onChange={e => setQuickForm({ ...quickForm, date: e.target.value })} /></FG>
+            <FG label="Amount (₹) *"><input type="number" value={quickForm.amount} onChange={e => setQuickForm({ ...quickForm, amount: e.target.value })} /></FG>
+          </div>
+          <div className="form-row">
+            <FG label="Remarks / Purpose"><input placeholder="e.g. Cash drawings or capital injection" value={quickForm.remarks} onChange={e => setQuickForm({ ...quickForm, remarks: e.target.value })} /></FG>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
 
   
 // ── 8. BALANCE SHEET VIEW ─────────────────────────────────────────────────────
