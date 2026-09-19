@@ -41,6 +41,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:14
 .btn-danger{background:transparent;color:var(--red);border:1px solid #3a1a1a}.btn-danger:hover{background:#1e0a0a}
 .btn-info{background:transparent;color:var(--blue);border:1px solid #1a2e4a}.btn-info:hover{background:#0a1a2e}
 .btn-sm{padding:4px 10px;font-size:11.5px}
+.btn:disabled{opacity:.45;cursor:not-allowed}
 .stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px}
 .stats-grid-5{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:20px}
 .stat-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r2);padding:14px 18px;position:relative;overflow:hidden}
@@ -92,11 +93,6 @@ tr:hover td{background:rgba(255,255,255,.02)}
 .empty{text-align:center;padding:48px 24px;color:var(--text3)}
 .empty-icon{font-size:32px;margin-bottom:12px}
 .filter-bar{display:flex;gap:10px;margin-bottom:16px;align-items:center;flex-wrap:wrap}
-.output-rows{display:flex;flex-direction:column;gap:8px}
-.output-row{display:grid;grid-template-columns:1fr 1fr auto;gap:8px;align-items:end}
-.cpt-banner{background:#0a1a00;border:1px solid #1e3a00;border-radius:var(--r2);padding:16px 22px;display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
-.cpt-val{font-size:30px;font-weight:800;color:var(--accent);font-family:var(--mono)}
-.cpt-sub{font-size:11px;color:var(--text3);margin-top:3px;font-family:var(--mono)}
 .config-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r2);padding:18px 20px;margin-bottom:16px}
 .config-card h3{font-size:13px;font-weight:600;margin-bottom:14px}
 .config-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}
@@ -107,8 +103,9 @@ tr:hover td{background:rgba(255,255,255,.02)}
 .cost-val{font-family:var(--mono);font-size:12.5px;color:var(--text);text-align:right}
 .report-section{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r2);padding:20px 22px;margin-bottom:20px}
 .two-col{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px}
-.alert-strip{background:#120a00;border:1px solid #3a2000;border-radius:var(--r2);padding:14px 18px;margin-bottom:20px}
-.alert-strip h4{font-size:11px;font-weight:700;color:var(--amber);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px}
+.cpt-banner{background:#0a1a00;border:1px solid #1e3a00;border-radius:var(--r2);padding:16px 22px;display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
+.cpt-val{font-size:30px;font-weight:800;color:var(--accent);font-family:var(--mono)}
+.cpt-sub{font-size:11px;color:var(--text3);margin-top:3px;font-family:var(--mono)}
 .pill-tabs{display:flex;gap:4px;background:var(--bg3);border-radius:var(--r2);padding:4px;margin-bottom:16px;width:fit-content}
 .pill-tab{padding:6px 16px;border-radius:var(--r);font-size:12px;font-weight:500;cursor:pointer;border:none;background:none;color:var(--text3);font-family:var(--font);transition:all .12s}
 .pill-tab.active{background:var(--bg2);color:var(--text);box-shadow:0 1px 4px rgba(0,0,0,.4)}
@@ -122,12 +119,6 @@ const fmtWt = kg => kg>=1000?`${(kg/1000).toFixed(3)} MT`:`${kg} kg`;
 const fmt = n => `₹${(+n||0).toLocaleString("en-IN",{minimumFractionDigits:2,maximumFractionDigits:2})}`;
 const today = () => new Date().toISOString().split("T")[0];
 const nowTime = () => new Date().toTimeString().slice(0,5);
-
-const AUTO_EXPENSE_MAP = {
-  utility: "electric",
-  staff: "labour",
-  tax: "royalty",
-};
 
 const BANK_STOPWORDS = new Set(["UPI","NEFT","IMPS","RTGS","ACH","ACH DR","ACH CR","POS","ATM","DR","CR","WDL","TRF","TRANSFER","BIL","MOB","INB","ECOM","ECS","ONL","P2A","P2M","P2PM","TXN","REF","VPA","PAYMENT","AUTOPAY","MANDATE","NACH"]);
 function normalizeDesc(desc) {
@@ -210,7 +201,7 @@ function computeStock(grades, receipts, entries, weighments) {
   return s;
 }
 
-// ── PDF.JS LOADER (Vite Production Safe) ───────────────────────────────────────
+// ── PDF.JS LOADER ─────────────────────────────────────────────────────────────
 let _pdfjsPromise = null;
 function loadPdfjs() {
   if (!_pdfjsPromise) {
@@ -310,7 +301,7 @@ const NAV = [
   { id:"opscosts", label:"Monthly Ops Costs", icon:"🧾", group:"Commercial" },
   { id:"expenses", label:"Expenses", icon:"💸", group:"Commercial" },
   { id:"capital", label:"Capital & Infra", icon:"🏗", group:"Commercial" },
-  { id:"bankstatement", label:"Bank Reconcile", icon:"🏦", group:"Banking" },
+  { id:"bankstatement", label:"Bank Statement", icon:"🏦", group:"Banking" },
   { id:"partnercashbook", label:"Partner Cashbook", icon:"📖", group:"Banking" },
   { id:"balancesheet", label:"Balance Sheet", icon:"🏛", group:"Reports" },
   { id:"costs", label:"Cost Sheet", icon:"💰", group:"Reports" },
@@ -342,7 +333,7 @@ function Modal({ title, onClose, children, foot, size="" }) {
   );
 }
 
-// ── MAIN APPLICATION ──────────────────────────────────────────────────────────
+// ── APP MAIN ──────────────────────────────────────────────────────────────────
 export default function App() {
   const [view, setView] = useState("dashboard");
   const [navOpen, setNavOpen] = useState(false);
@@ -384,7 +375,7 @@ export default function App() {
         setCostConfig(d.costConfig); setQcTests(d.qcTests); setSamples(d.samples);
         setPartnerCashbook(d.partnerCashbook);
       } catch (err) {
-        console.error("Initialization failed:", err);
+        console.error("Database sync failed:", err);
       } finally {
         setLoading(false);
       }
@@ -395,7 +386,7 @@ export default function App() {
   const goTo = id => { setView(id); setNavOpen(false); };
 
   if (loading) {
-    return <div style={{ display:"flex", alignItems:"center", justifyContent:"center", minHeight:"100vh", background:"var(--bg)", color:"var(--accent)", fontFamily:"monospace" }}>Connecting to ERP Ledger...</div>;
+    return <div style={{ display:"flex", alignItems:"center", justifyContent:"center", minHeight:"100vh", background:"var(--bg)", color:"var(--accent)", fontFamily:"monospace" }}>Syncing Cloud Database...</div>;
   }
 
   return (
@@ -444,7 +435,7 @@ export default function App() {
 
           <div className="content">
             {view === "dashboard" && <DashboardView {...{ weighments, boulderReceipts, productionEntries, expenses, capitalItems, bankTxns, partnerCashbook }} />}
-            {view === "bankstatement" && <BankReconciliationView {...{ bankBatches, setBankBatches, bankTxns, setBankTxns, bankLabels, setBankLabels, capitalItems, setCapitalItems, expenses, setExpenses, partnerCashbook, setPartnerCashbook }} />}
+            {view === "bankstatement" && <BankStatementGroupingView {...{ bankBatches, setBankBatches, bankTxns, setBankTxns, bankLabels, setBankLabels, setCapitalItems, setExpenses, setPartnerCashbook }} />}
             {view === "partnercashbook" && <PartnerCashbookView {...{ partnerCashbook, setPartnerCashbook, bankLabels, setExpenses, setCapitalItems }} />}
             {view === "balancesheet" && <BalanceSheetView {...{ capitalItems, bankTxns, partnerCashbook, purchases, expenses, weighments, grades, boulderReceipts, productionEntries, costConfig }} />}
             {view === "capital" && <CapitalRegisterView {...{ capitalItems, setCapitalItems }} />}
@@ -468,22 +459,13 @@ export default function App() {
   );
 }
 
-// ── 1. BANK RECONCILIATION WITH MULTI-TIER AUTOMATION ─────────────────────────
-function BankReconciliationView({ bankBatches, setBankBatches, bankTxns, setBankTxns, bankLabels, setBankLabels, capitalItems, setCapitalItems, expenses, setExpenses, partnerCashbook, setPartnerCashbook }) {
+// ── BANK STATEMENT: THE ORIGINAL COUNTERPARTY GROUPING EXPERIENCE ────────────
+function BankStatementGroupingView({ bankBatches, setBankBatches, bankTxns, setBankTxns, bankLabels, setBankLabels, setCapitalItems, setExpenses, setPartnerCashbook }) {
   const [sheet, setSheet] = useState(null);
   const [map, setMap] = useState({ dateCol:"", descCol:"", mode:"separate", debitCol:"", creditCol:"", amountCol:"" });
-
-  const linkedTxnIds = useMemo(() => {
-    const s = new Set();
-    expenses.forEach(e => { if (e.bankTxnId) s.add(e.bankTxnId); });
-    capitalItems.forEach(c => { if (c.bankTxnId) s.add(c.bankTxnId); });
-    partnerCashbook.forEach(p => { if (p.bankTxnId) s.add(p.bankTxnId); });
-    return s;
-  }, [expenses, capitalItems, partnerCashbook]);
-
-  const needsActionQueue = useMemo(() => {
-    return bankTxns.filter(t => !linkedTxnIds.has(t.id) && (t.debit > 0 || (t.credit > 0 && bankLabels[t.key]?.type === "owner")));
-  }, [bankTxns, linkedTxnIds, bankLabels]);
+  const [search, setSearch] = useState("");
+  const [unlabeledOnly, setUnlabeledOnly] = useState(false);
+  const [expanded, setExpanded] = useState(null);
 
   async function onFile(e) {
     const file = e.target.files[0];
@@ -495,7 +477,7 @@ function BankReconciliationView({ bankBatches, setBankBatches, bankTxns, setBank
         const parsedSheet = await parsePdfStatement(file);
         setSheet(parsedSheet);
         setMap({ dateCol: "Date", descCol: "Narration", mode: "separate", debitCol: "Withdrawal Amt", creditCol: "Deposit Amt", amountCol: "" });
-      } catch (err) { alert("PDF Parsing error: " + err.message); }
+      } catch (err) { alert("PDF Error: " + err.message); }
       return;
     }
 
@@ -520,8 +502,8 @@ function BankReconciliationView({ bankBatches, setBankBatches, bankTxns, setBank
     reader.readAsArrayBuffer(file);
   }
 
-  async function importAndAutoRoute() {
-    if (!sheet || !map.dateCol || !map.descCol) return alert("Select mapping columns");
+  async function importRows() {
+    if (!sheet || !map.dateCol || !map.descCol) return alert("Select required mapping columns");
     const parsed = sheet.rows.map(r => {
       const date = parseBankDate(r[map.dateCol]);
       const description = String(r[map.descCol] || "").trim();
@@ -540,64 +522,100 @@ function BankReconciliationView({ bankBatches, setBankBatches, bankTxns, setBank
       const res = await db.importBankBatch(sheet.fileName, parsed);
       setBankBatches(bs => [res.batch, ...bs]);
       setBankTxns(txs => [...txs, ...res.txns]);
-
-      const autoExp = [];
-      const autoInfusions = [];
-
-      for (const t of res.txns) {
-        const meta = bankLabels[t.key];
-        if (!meta) continue;
-
-        // Tier 1: Auto-credit partner capital infusions
-        if (t.credit > 0 && meta.type === "owner") {
-          const partnerName = meta.label || t.key;
-          const entry = await db.logPartnerCashbookEntry(t, partnerName, "Capital Infusion", "capital");
-          autoInfusions.push(entry);
-        }
-
-        // Tier 1: Auto-route utility, labor, tax debits
-        if (t.debit > 0 && AUTO_EXPENSE_MAP[meta.type]) {
-          const cat = AUTO_EXPENSE_MAP[meta.type];
-          const exp = await db.promoteTxnToExpense(t, cat);
-          autoExp.push(exp);
-        }
-      }
-
-      if (autoExp.length) setExpenses(prev => [...autoExp, ...prev]);
-      if (autoInfusions.length) setPartnerCashbook(prev => [...autoInfusions, ...prev]);
-
       setSheet(null);
-      alert(`Imported ${res.txns.length} transactions.\n⚡ ${autoExp.length} auto-filed to Expenses\n⚡ ${autoInfusions.length} auto-filed to Partner Equity\n${res.txns.length - autoExp.length - autoInfusions.length} queued for verification.`);
+      alert(`Imported ${res.txns.length} transactions and synchronized with Supabase!`);
     } catch (err) { alert(err.message); }
   }
 
-  async function routeTxn(t, destination, extra, accountType = "current") {
+  async function updateLabel(rawKeys, patch) {
     try {
-      if (destination === "capex") {
-        const item = await db.promoteTxnToCapital(t, extra || "machinery", "own");
-        setCapitalItems(cs => [item, ...cs]);
-      } else if (destination === "expense") {
-        const exp = await db.promoteTxnToExpense(t, extra || "misc");
-        setExpenses(es => [exp, ...es]);
-      } else if (destination === "partner_cashbook") {
-        const name = bankLabels[t.key]?.label || t.key;
-        const cb = await db.logPartnerCashbookEntry(t, name, extra, accountType);
-        setPartnerCashbook(prev => [cb, ...prev]);
-      }
+      await db.updateBankLabels(rawKeys, patch);
+      setBankLabels(bl => {
+        const next = { ...bl };
+        rawKeys.forEach(k => { next[k] = { ...next[k], ...patch }; });
+        return next;
+      });
     } catch (err) { alert(err.message); }
   }
+
+  async function promoteToCapital(t) {
+    try {
+      const item = await db.promoteTxnToCapital(t, "machinery", "own");
+      setCapitalItems(cs => [item, ...cs]);
+      alert(`Promoted ${fmt(t.debit)} to Fixed Assets!`);
+    } catch (err) { alert(err.message); }
+  }
+
+  async function promoteToExpense(t) {
+    try {
+      const exp = await db.promoteTxnToExpense(t, "misc");
+      setExpenses(es => [exp, ...es]);
+      alert(`Promoted ${fmt(t.debit)} to Expenses!`);
+    } catch (err) { alert(err.message); }
+  }
+
+  async function logCashbook(t, partnerName, type, accountType) {
+    try {
+      const entry = await db.logPartnerCashbookEntry(t, partnerName, type, accountType);
+      setPartnerCashbook(cb => [entry, ...cb]);
+      alert(`Logged ${type} of ${fmt(entry.amount)} for ${partnerName}`);
+    } catch (err) { alert(err.message); }
+  }
+
+  // Counterparty Grouping Engine
+  const groups = useMemo(() => {
+    const m = {};
+    bankTxns.forEach(t => {
+      if (!m[t.key]) m[t.key] = { key: t.key, txns: [], totalDebit: 0, totalCredit: 0 };
+      m[t.key].txns.push(t); m[t.key].totalDebit += t.debit; m[t.key].totalCredit += t.credit;
+    });
+    return Object.values(m).map(g => ({
+      ...g,
+      label: bankLabels[g.key]?.label || "",
+      type: bankLabels[g.key]?.type || "unlabeled",
+    }));
+  }, [bankTxns, bankLabels]);
+
+  // Merge counterparties sharing the same typed name
+  const mergedGroups = useMemo(() => {
+    const m = {};
+    groups.forEach(g => {
+      const mergeKey = g.label.trim() ? g.label.trim().toLowerCase() : `__raw__${g.key}`;
+      if (!m[mergeKey]) m[mergeKey] = { mergeKey, label: g.label, type: g.type, rawKeys: [], txns: [], totalDebit: 0, totalCredit: 0 };
+      m[mergeKey].rawKeys.push(g.key);
+      m[mergeKey].txns.push(...g.txns);
+      m[mergeKey].totalDebit += g.totalDebit;
+      m[mergeKey].totalCredit += g.totalCredit;
+    });
+    return Object.values(m).sort((a,b) => (b.totalDebit + b.totalCredit) - (a.totalDebit + a.totalCredit));
+  }, [groups]);
+
+  const filtered = mergedGroups.filter(g => {
+    if (unlabeledOnly && g.label) return false;
+    if (!search) return true;
+    const s = search.toLowerCase();
+    return g.rawKeys.some(k => k.toLowerCase().includes(s)) || g.label.toLowerCase().includes(s) || g.txns.some(t => t.description.toLowerCase().includes(s));
+  });
+
+  const totalPaid = bankTxns.reduce((s, t) => s + t.debit, 0);
+  const totalRecv = bankTxns.reduce((s, t) => s + t.credit, 0);
+  const namedCount = mergedGroups.filter(g => g.label).length;
 
   return (
     <div>
       <div className="config-card">
-        <h3>Import Bank Statement File</h3>
+        <h3>Import Net-Banking Statement</h3>
         {!sheet ? (
-          <label className="btn btn-primary" style={{ cursor:"pointer" }}>
-            Choose Statement (PDF / CSV / XLSX)
-            <input type="file" accept=".pdf,.csv,.xlsx" onChange={onFile} style={{ display:"none" }} />
-          </label>
+          <div style={{ display:"flex", alignItems:"center", gap:14, flexWrap:"wrap" }}>
+            <label className="btn btn-primary" style={{ cursor:"pointer" }}>
+              Choose PDF / CSV / XLSX File
+              <input type="file" accept=".pdf,.csv,.xlsx,.xls" onChange={onFile} style={{ display:"none" }} />
+            </label>
+            <span style={{ fontSize:11.5, color:"var(--text3)" }}>Bank statement PDF (HDFC tested) or CSV/XLSX export from net-banking.</span>
+          </div>
         ) : (
           <div>
+            <div style={{ fontSize:12, color:"var(--text2)", marginBottom:12 }}>{sheet.fileName} — {sheet.rows.length} rows found. Confirm mapping:</div>
             <div className="config-row">
               <FG label="Date Column"><select value={map.dateCol} onChange={e => setMap({ ...map, dateCol: e.target.value })}>{sheet.headers.map(h => <option key={h} value={h}>{h}</option>)}</select></FG>
               <FG label="Description Column"><select value={map.descCol} onChange={e => setMap({ ...map, descCol: e.target.value })}>{sheet.headers.map(h => <option key={h} value={h}>{h}</option>)}</select></FG>
@@ -606,66 +624,108 @@ function BankReconciliationView({ bankBatches, setBankBatches, bankTxns, setBank
             </div>
             <div style={{ display:"flex", gap:10, marginTop:14 }}>
               <button className="btn btn-ghost" onClick={() => setSheet(null)}>Cancel</button>
-              <button className="btn btn-primary" onClick={importAndAutoRoute}>Reconcile & Process</button>
+              <button className="btn btn-primary" onClick={importRows}>Import Transactions</button>
             </div>
           </div>
         )}
       </div>
 
-      {needsActionQueue.length > 0 && (
-        <div className="alert-strip">
-          <h4>Verification Inbox: Unresolved Bank Movements ({needsActionQueue.length})</h4>
-          <p style={{ fontSize: 12, color: "var(--text3)", marginBottom: 12 }}>
-            Review ambiguous movements below. Choose whether items are capital equipment, monthly opex, or partner withdrawals:
-          </p>
-          <div className="table-wrap">
-            <table>
-              <thead><tr><th>Date</th><th>Narration</th><th className="r">Amount</th><th>Classification</th><th className="r">1-Click Destination</th></tr></thead>
-              <tbody>
-                {needsActionQueue.map(t => {
-                  const meta = bankLabels[t.key] || { label: t.key, type: "unlabeled" };
-                  return (
-                    <tr key={t.id}>
-                      <td className="mono">{t.date}</td>
-                      <td style={{ fontWeight: 500 }}>{t.description}</td>
-                      <td className="r mono" style={{ color: t.debit > 0 ? "var(--red)" : "var(--green)", fontWeight: 700 }}>
-                        {t.debit > 0 ? fmt(t.debit) : fmt(t.credit)}
-                      </td>
-                      <td>
-                        <BadgeComponent type={meta.type === "unlabeled" ? "amber" : "muted"}>{meta.type}</BadgeComponent>{" "}
-                        <span style={{ fontSize: 11, color: "var(--text2)" }}>{meta.label}</span>
-                      </td>
-                      <td className="r">
-                        <div style={{ display:"flex", gap:6, justifyContent:"flex-end" }}>
-                          {t.debit > 0 && (
-                            <>
-                              <button className="btn btn-ghost btn-sm" title="Promote to Capex / Gross Block" onClick={() => routeTxn(t, "capex", "machinery")}>+ Capex</button>
-                              <button className="btn btn-ghost btn-sm" title="Promote to Maintenance Opex" onClick={() => routeTxn(t, "expense", "maint")}>+ Opex</button>
-                              {meta.type === "owner" && (
-                                <button className="btn btn-danger btn-sm" title="Log Drawing (Current Account)" onClick={() => routeTxn(t, "partner_cashbook", "Drawings", "current")}>+ Drawing</button>
-                              )}
-                            </>
-                          )}
-                          {t.credit > 0 && meta.type === "owner" && (
-                            <button className="btn btn-primary btn-sm" onClick={() => routeTxn(t, "partner_cashbook", "Capital Infusion", "capital")}>+ Equity</button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+      <div className="stats-grid">
+        <StatCard label="Total Transactions" value={bankTxns.length} sub={`${bankBatches.length} file(s)`} color="blue" />
+        <StatCard label="Total Paid Out" value={fmt(totalPaid)} sub="debits" color="red" />
+        <StatCard label="Total Received" value={fmt(totalRecv)} sub="credits" color="green" />
+        <StatCard label="Groups Named" value={`${namedCount} / ${mergedGroups.length}`} sub="counterparties" color="purple" />
+      </div>
+
+      {bankTxns.length > 0 && (
+        <>
+          <div className="filter-bar">
+            <input
+              placeholder="Search by name or narration…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              style={{ background:"var(--bg3)", border:"1px solid var(--border2)", borderRadius:"var(--r)", padding:"7px 11px", color:"var(--text)", fontSize:12.5, minWidth:220 }}
+            />
+            <button className={`btn btn-sm ${unlabeledOnly ? "btn-primary" : "btn-ghost"}`} onClick={() => setUnlabeledOnly(u => !u)}>
+              Unlabeled Only
+            </button>
           </div>
-        </div>
+
+          <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+            {filtered.map(g => (
+              <div key={g.mergeKey} className="config-card" style={{ padding: 14 }}>
+                <div style={{ display:"flex", gap:12, flexWrap:"wrap", alignItems:"flex-end", justifyContent:"space-between" }}>
+                  <div style={{ display:"flex", gap:12, flexWrap:"wrap", flex:1, minWidth:280 }}>
+                    <FG label="Name this group">
+                      <input placeholder={g.rawKeys[0]} value={g.label} onChange={e => updateLabel(g.rawKeys, { label: e.target.value })} />
+                    </FG>
+                    <FG label="Type">
+                      <select value={g.type} onChange={e => updateLabel(g.rawKeys, { type: e.target.value })}>
+                        {CP_TYPES.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
+                      </select>
+                    </FG>
+                  </div>
+                  <div style={{ display:"flex", gap:18, fontFamily:"var(--mono)", fontSize:12.5 }}>
+                    <div><div style={{ color:"var(--text3)", fontSize:10 }}>PAID</div><div style={{ color:"var(--red)", fontWeight:700 }}>{fmt(g.totalDebit)}</div></div>
+                    <div><div style={{ color:"var(--text3)", fontSize:10 }}>RECEIVED</div><div style={{ color:"var(--green)", fontWeight:700 }}>{fmt(g.totalCredit)}</div></div>
+                    <div><div style={{ color:"var(--text3)", fontSize:10 }}>TXNS</div><div style={{ fontWeight:700 }}>{g.txns.length}</div></div>
+                  </div>
+                </div>
+
+                <div style={{ marginTop:8, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                  <span style={{ fontSize:11, color:"var(--text3)", fontFamily:"var(--mono)" }}>
+                    {g.rawKeys.length > 1 ? `Merged from ${g.rawKeys.length} narration variations` : g.rawKeys[0]}
+                  </span>
+                  <button className="btn btn-ghost btn-sm" onClick={() => setExpanded(x => x === g.mergeKey ? null : g.mergeKey)}>
+                    {expanded === g.mergeKey ? "Hide" : "Show"} transactions
+                  </button>
+                </div>
+
+                {expanded === g.mergeKey && (
+                  <div className="table-wrap" style={{ marginTop:10 }}>
+                    <table>
+                      <thead><tr><th>Date</th><th>Narration</th><th className="r">Debit</th><th className="r">Credit</th><th className="r">Actions</th></tr></thead>
+                      <tbody>
+                        {g.txns.sort((a,b) => b.date.localeCompare(a.date)).map(t => (
+                          <tr key={t.id}>
+                            <td className="mono" style={{ fontSize:11, color:"var(--text3)" }}>{t.date}</td>
+                            <td style={{ fontSize:12 }}>{t.description}</td>
+                            <td className="r mono" style={{ fontSize:11, color:"var(--red)" }}>{t.debit > 0 ? fmt(t.debit) : "—"}</td>
+                            <td className="r mono" style={{ fontSize:11, color:"var(--green)" }}>{t.credit > 0 ? fmt(t.credit) : "—"}</td>
+                            <td className="r">
+                              <div style={{ display:"flex", gap:4, justifyContent:"flex-end" }}>
+                                {t.credit > 0 && g.type === "owner" && (
+                                  <button className="btn btn-primary btn-sm" onClick={() => logCashbook(t, g.label || g.key, "Capital Infusion", "capital")}>+ Equity</button>
+                                )}
+                                {t.debit > 0 && (
+                                  <>
+                                    <button className="btn btn-ghost btn-sm" title="Promote to Fixed Assets" onClick={() => promoteToCapital(t)}>+ Cap</button>
+                                    <button className="btn btn-ghost btn-sm" title="Promote to Expenses" onClick={() => promoteToExpense(t)}>+ Exp</button>
+                                    {g.type === "owner" && (
+                                      <button className="btn btn-danger btn-sm" title="Log Drawing" onClick={() => logCashbook(t, g.label || g.key, "Drawings", "current")}>+ Draw</button>
+                                    )}
+                                  </>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </>
       )}
     </div>
   );
 }
 
-// ── 2. PARTNER CASHBOOK & CURRENT ACCOUNT LEDGER ──────────────────────────────
+// ── 2. PARTNER CASHBOOK & CURRENT ACCOUNT ─────────────────────────────────────
 function PartnerCashbookView({ partnerCashbook, setPartnerCashbook, bankLabels, setExpenses, setCapitalItems }) {
-  const [activeTab, setActiveTab] = useState("all"); // 'all' | 'capital' | 'current'
+  const [activeTab, setActiveTab] = useState("all");
   const [partnerFilter, setPartnerFilter] = useState("All");
   const [openModal, setOpenModal] = useState(false);
 
@@ -677,13 +737,8 @@ function PartnerCashbookView({ partnerCashbook, setPartnerCashbook, bankLabels, 
   }, [bankLabels, partnerCashbook]);
 
   const [cf, setCf] = useState({
-    partnerName: partners[1] || "",
-    date: today(),
-    amount: "",
-    isCapex: false,
-    category: "misc",
-    description: "",
-    ref: "",
+    partnerName: partners[1] || "", date: today(), amount: "",
+    isCapex: false, category: "misc", description: "", ref: "",
   });
 
   const filtered = useMemo(() => {
@@ -705,11 +760,8 @@ function PartnerCashbookView({ partnerCashbook, setPartnerCashbook, bankLabels, 
         cf.partnerName, cf.date, cf.category, cf.amount, cf.description, cf.ref, cf.isCapex
       );
       setPartnerCashbook(prev => [res.cashbookEntry, ...prev]);
-      if (res.isCapex) {
-        setCapitalItems(prev => [res.item, ...prev]);
-      } else {
-        setExpenses(prev => [res.item, ...prev]);
-      }
+      if (res.isCapex) setCapitalItems(prev => [res.item, ...prev]);
+      else setExpenses(prev => [res.item, ...prev]);
       setOpenModal(false);
       alert(`Recorded cash entry for ${cf.partnerName} and cross-posted to ${res.isCapex ? "Fixed Assets" : "Expenses"}!`);
     } catch (err) { alert(err.message); }
@@ -718,12 +770,10 @@ function PartnerCashbookView({ partnerCashbook, setPartnerCashbook, bankLabels, 
   return (
     <div>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-end", marginBottom:16, flexWrap:"wrap", gap:10 }}>
-        <div>
-          <div className="pill-tabs">
-            <button className={`pill-tab ${activeTab === "all" ? "active" : ""}`} onClick={() => setActiveTab("all")}>All Ledger Entries</button>
-            <button className={`pill-tab ${activeTab === "capital" ? "active" : ""}`} onClick={() => setActiveTab("capital")}>Capital Accounts (Permanent)</button>
-            <button className={`pill-tab ${activeTab === "current" ? "active" : ""}`} onClick={() => setActiveTab("current")}>Current Accounts (Advances & Drawings)</button>
-          </div>
+        <div className="pill-tabs">
+          <button className={`pill-tab ${activeTab === "all" ? "active" : ""}`} onClick={() => setActiveTab("all")}>All Movements</button>
+          <button className={`pill-tab ${activeTab === "capital" ? "active" : ""}`} onClick={() => setActiveTab("capital")}>Capital Accounts (Permanent)</button>
+          <button className={`pill-tab ${activeTab === "current" ? "active" : ""}`} onClick={() => setActiveTab("current")}>Current Accounts (Advances & Drawings)</button>
         </div>
         <div style={{ display:"flex", gap:10, alignItems:"flex-end" }}>
           <FG label="Partner Filter">
@@ -737,38 +787,34 @@ function PartnerCashbookView({ partnerCashbook, setPartnerCashbook, bankLabels, 
 
       <div className="stats-grid">
         <StatCard label="Permanent Capital Infused" value={fmt(capitalInfusions)} color="accent" sub="Core Equity" />
-        <StatCard label="Direct Cash Advanced by Partner" value={fmt(currentCredits)} color="green" sub="Paid On Behalf" />
-        <StatCard label="Drawings / Withdrawals Taken" value={fmt(currentDrawings)} color="red" sub="Owed Back / Deducted" />
-        <StatCard label="Net Current Due to Partner" value={fmt(currentCredits - currentDrawings)} color="blue" sub="Payable / (Receivable)" />
+        <StatCard label="Direct Cash Spent on Site" value={fmt(currentCredits)} color="green" sub="Advances" />
+        <StatCard label="Drawings Taken" value={fmt(currentDrawings)} color="red" sub="Withdrawals" />
+        <StatCard label="Net Current Position" value={fmt(currentCredits - currentDrawings)} color="blue" sub="Due to Partner" />
       </div>
 
       <div className="table-wrap">
         <table>
           <thead><tr><th>Date</th><th>Partner</th><th>Account</th><th>Movement Type</th><th>Narration</th><th>Channel</th><th className="r">Amount</th></tr></thead>
           <tbody>
-            {filtered.length === 0 ? (
-              <tr><td colSpan={7}><EmptyState icon="📖" message="No cashbook transactions found for this view" /></td></tr>
-            ) : (
-              filtered.map(e => (
-                <tr key={e.id}>
-                  <td className="mono">{e.entryDate}</td>
-                  <td style={{ fontWeight: 600 }}>{e.partnerName}</td>
-                  <td><BadgeComponent type={e.accountType === "capital" ? "accent" : "muted"}>{e.accountType}</BadgeComponent></td>
-                  <td><BadgeComponent type={e.type === "Capital Infusion" || e.type === "Direct Cash Expense" ? "green" : "red"}>{e.type}</BadgeComponent></td>
-                  <td style={{ fontSize:12 }}>{e.remarks}</td>
-                  <td><BadgeComponent type="muted">{e.paymentMode}</BadgeComponent></td>
-                  <td className="r mono" style={{ fontWeight: 700, color: e.type === "Drawings" ? "var(--red)" : "var(--green)" }}>
-                    {e.type === "Drawings" ? "-" : "+"}{fmt(e.amount)}
-                  </td>
-                </tr>
-              ))
-            )}
+            {filtered.map(e => (
+              <tr key={e.id}>
+                <td className="mono">{e.entryDate}</td>
+                <td style={{ fontWeight:600 }}>{e.partnerName}</td>
+                <td><BadgeComponent type={e.accountType === "capital" ? "accent" : "muted"}>{e.accountType}</BadgeComponent></td>
+                <td><BadgeComponent type={e.type === "Capital Infusion" || e.type === "Direct Cash Expense" ? "green" : "red"}>{e.type}</BadgeComponent></td>
+                <td style={{ fontSize:12 }}>{e.remarks}</td>
+                <td><BadgeComponent type="muted">{e.paymentMode}</BadgeComponent></td>
+                <td className="r mono" style={{ fontWeight:700, color: e.type === "Drawings" ? "var(--red)" : "var(--green)" }}>
+                  {e.type === "Drawings" ? "-" : "+"}{fmt(e.amount)}
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
 
       {openModal && (
-        <Modal title="Record Partner Cash Expense / Advance" onClose={() => setOpenModal(false)} foot={<><button className="btn btn-ghost" onClick={() => setOpenModal(false)}>Cancel</button><button className="btn btn-primary" onClick={handleDirectCashSubmit}>Record Entry</button></>}>
+        <Modal title="Record Partner Cash Advance / Expense" onClose={() => setOpenModal(false)} foot={<><button className="btn btn-ghost" onClick={() => setOpenModal(false)}>Cancel</button><button className="btn btn-primary" onClick={handleDirectCashSubmit}>Save Entry</button></>}>
           <div className="form-row cols-2">
             <FG label="Partner *">
               <select value={cf.partnerName} onChange={e => setCf({ ...cf, partnerName: e.target.value })}>
@@ -781,8 +827,8 @@ function PartnerCashbookView({ partnerCashbook, setPartnerCashbook, bankLabels, 
             <FG label="Amount Paid (₹) *"><input type="number" value={cf.amount} onChange={e => setCf({ ...cf, amount: e.target.value })} /></FG>
             <FG label="Entry Nature">
               <select value={cf.isCapex ? "capex" : "opex"} onChange={e => setCf({ ...cf, isCapex: e.target.value === "capex" })}>
-                <option value="opex">Operational Expense (Site Fuel, Spares, Cash Labor)</option>
-                <option value="capex">Fixed Asset / Land (Civil Work, Machinery Advance)</option>
+                <option value="opex">Operational Expense (Site Fuel, Spares, Labor)</option>
+                <option value="capex">Fixed Asset / Land (Civil Work, Plant Equipment)</option>
               </select>
             </FG>
           </div>
@@ -792,7 +838,7 @@ function PartnerCashbookView({ partnerCashbook, setPartnerCashbook, bankLabels, 
                 {(cf.isCapex ? CAP_CATS : EXP_CATS).map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
               </select>
             </FG>
-            <FG label="Bill / Voucher / Ref #"><input placeholder="Voucher # or Cash Memo" value={cf.ref} onChange={e => setCf({ ...cf, ref: e.target.value })} /></FG>
+            <FG label="Bill / Voucher #"><input value={cf.ref} onChange={e => setCf({ ...cf, ref: e.target.value })} /></FG>
           </div>
           <div className="form-row">
             <FG label="Description *"><input placeholder="e.g. Paid cash for JCB land clearing or transformer line advance" value={cf.description} onChange={e => setCf({ ...cf, description: e.target.value })} /></FG>
@@ -803,9 +849,8 @@ function PartnerCashbookView({ partnerCashbook, setPartnerCashbook, bankLabels, 
   );
 }
 
-// ── 3. BALANCE SHEET WITH DYNAMIC INVENTORY & OFFSITE VALUATION ───────────────
+// ── 3. BALANCE SHEET ──────────────────────────────────────────────────────────
 function BalanceSheetView({ capitalItems, bankTxns, partnerCashbook, purchases, expenses, weighments, grades, boulderReceipts, productionEntries, costConfig }) {
-  // Fixed Assets Breakdown (Land, Machinery, Civil)
   const fixedAssets = useMemo(() => {
     return capitalItems.reduce((acc, c) => {
       acc[c.category] = (acc[c.category] || 0) + c.amount;
@@ -814,12 +859,10 @@ function BalanceSheetView({ capitalItems, bankTxns, partnerCashbook, purchases, 
   }, [capitalItems]);
   const totalFixedAssets = Object.values(fixedAssets).reduce((s, a) => s + a, 0);
 
-  // Liquid Bank Balance
   const bankBalance = useMemo(() => {
     return bankTxns.reduce((s, t) => s + (t.credit - t.debit), 0);
   }, [bankTxns]);
 
-  // Dynamic Yard Valuation from Stock Engine
   const stock = useMemo(() => computeStock(grades, boulderReceipts, productionEntries, weighments), [grades, boulderReceipts, productionEntries, weighments]);
   const totalRMReceivedMT = boulderReceipts.reduce((s, r) => s + r.quantityMT, 0);
   const totalRMCost = purchases.reduce((s, p) => s + p.taxableAmount, 0);
@@ -829,7 +872,7 @@ function BalanceSheetView({ capitalItems, bankTxns, partnerCashbook, purchases, 
   const rawMaterialValuation = Math.max(0, boulderClosingMT * avgBoulderRate);
 
   const finishedGoodsValuation = useMemo(() => {
-    const cptVal = +costConfig.stdSellingRate || 1800; // baseline cost per tonne
+    const cptVal = +costConfig.stdSellingRate || 1800;
     return Object.values(stock)
       .filter(s => !s.isBoulder)
       .reduce((s, g) => s + Math.max(0, g.closing * cptVal), 0);
@@ -838,14 +881,12 @@ function BalanceSheetView({ capitalItems, bankTxns, partnerCashbook, purchases, 
   const totalCurrentAssets = (bankBalance > 0 ? bankBalance : 0) + rawMaterialValuation + finishedGoodsValuation;
   const totalAssets = totalFixedAssets + totalCurrentAssets;
 
-  // Liabilities
   const loanCapital = useMemo(() => {
     return capitalItems.filter(c => c.fundedBy === "loan").reduce((s, c) => s + c.amount, 0);
   }, [capitalItems]);
   const bankOverdraft = bankBalance < 0 ? Math.abs(bankBalance) : 0;
   const totalLiabilities = loanCapital + bankOverdraft;
 
-  // Partner Equity (Capital Account + Current Account Net)
   const partnerEquity = useMemo(() => {
     const raw = {};
     partnerCashbook.forEach(e => {
@@ -856,7 +897,6 @@ function BalanceSheetView({ capitalItems, bankTxns, partnerCashbook, purchases, 
   }, [partnerCashbook]);
   const totalPartnerEquity = Object.values(partnerEquity).reduce((s, a) => s + a, 0);
 
-  // Retained Earnings (Sales Dispatches - All Incurred Expenses)
   const totalRevenue = weighments.filter(w => w.purpose === "Sale").reduce((s, w) => s + (w.netWeight / 1000) * (+costConfig.stdSellingRate || 1800), 0);
   const totalSpend = purchases.reduce((s, p) => s + p.taxableAmount, 0) + expenses.reduce((s, e) => s + e.amount, 0);
   const retainedEarnings = totalRevenue - totalSpend;
@@ -872,7 +912,6 @@ function BalanceSheetView({ capitalItems, bankTxns, partnerCashbook, purchases, 
       </div>
 
       <div className="two-col">
-        {/* ASSETS */}
         <div className="report-section">
           <h3>Assets (Gross Block & Real-Time Inventory)</h3>
           <div style={{ fontWeight:600, fontSize:11, color:"var(--text3)", margin:"10px 0" }}>FIXED INFRASTRUCTURE ASSETS (CAPEX)</div>
@@ -902,7 +941,6 @@ function BalanceSheetView({ capitalItems, bankTxns, partnerCashbook, purchases, 
           </div>
         </div>
 
-        {/* LIABILITIES & EQUITY */}
         <div className="report-section">
           <h3>Liabilities & Partner Net Worth</h3>
           <div style={{ fontWeight:600, fontSize:11, color:"var(--text3)", margin:"10px 0" }}>DEBT & CURRENT LIABILITIES</div>
@@ -938,7 +976,7 @@ function BalanceSheetView({ capitalItems, bankTxns, partnerCashbook, purchases, 
   );
 }
 
-// ── 4. CAPITAL REGISTER (WITH DIRECT CASH & LAND PURCHASE SUPPORT) ────────────
+// ── 4. CAPITAL REGISTER ───────────────────────────────────────────────────────
 function CapitalRegisterView({ capitalItems, setCapitalItems }) {
   const [open, setOpen] = useState(false);
   const blank = { date:today(), category:"land", description:"", amount:"", paidTo:"", reference:"", fundedBy:"own", paymentMode:"cash", paidByPartner:"" };
@@ -978,17 +1016,17 @@ function CapitalRegisterView({ capitalItems, setCapitalItems }) {
       {open && (
         <Modal title="Record Capital / Land / Plant Asset" onClose={() => setOpen(false)} foot={<><button className="btn btn-ghost" onClick={() => setOpen(false)}>Cancel</button><button className="btn btn-primary" onClick={save}>Save Asset</button></>}>
           <div className="form-row cols-2"><FG label="Acquisition Date"><input type="date" value={f.date} onChange={e => set("date")(e.target.value)} /></FG><FG label="Asset Category"><select value={f.category} onChange={e => set("category")(e.target.value)}>{CAP_CATS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</select></FG></div>
-          <div className="form-row cols-2"><FG label="Total Cost / Value (₹)"><input type="number" value={f.amount} onChange={e => set("amount")(e.target.value)} /></FG><FG label="Payment Method"><select value={f.paymentMode} onChange={e => set("paymentMode")(e.target.value)}><option value="cash">Direct Cash / Off-Book</option><option value="bank">Company Bank Account</option><option value="partner_personal">Partner Personal Account</option></select></FG></div>
+          <div className="form-row cols-2"><FG label="Total Cost (₹)"><input type="number" value={f.amount} onChange={e => set("amount")(e.target.value)} /></FG><FG label="Payment Method"><select value={f.paymentMode} onChange={e => set("paymentMode")(e.target.value)}><option value="cash">Direct Cash / Off-Book</option><option value="bank">Company Bank Account</option><option value="partner_personal">Partner Personal Account</option></select></FG></div>
           <div className="form-row cols-2"><FG label="Financing Source"><select value={f.fundedBy} onChange={e => set("fundedBy")(e.target.value)}><option value="own">Partner Equity</option><option value="loan">Bank / Equipment Loan</option></select></FG><FG label="Paid By Partner (Optional)"><input placeholder="Partner Name" value={f.paidByPartner} onChange={e => set("paidByPartner")(e.target.value)} /></FG></div>
-          <div className="form-row"><FG label="Asset Description"><input placeholder="e.g. 2-Acre Land Plot Registry (Peddapur) or Jaw Crusher Advance" value={f.description} onChange={e => set("description")(e.target.value)} /></FG></div>
-          <div className="form-row cols-2"><FG label="Paid To (Vendor/Seller)"><input value={f.paidTo} onChange={e => set("paidTo")(e.target.value)} /></FG><FG label="Registry / Deed / Invoice Ref"><input value={f.reference} onChange={e => set("reference")(e.target.value)} /></FG></div>
+          <div className="form-row"><FG label="Asset Description"><input placeholder="e.g. Land Plot Registry (Peddapur) or Machinery Advance" value={f.description} onChange={e => set("description")(e.target.value)} /></FG></div>
+          <div className="form-row cols-2"><FG label="Paid To"><input value={f.paidTo} onChange={e => set("paidTo")(e.target.value)} /></FG><FG label="Registry / Deed / Ref #"><input value={f.reference} onChange={e => set("reference")(e.target.value)} /></FG></div>
         </Modal>
       )}
     </div>
   );
 }
 
-// ── 5. COMMERCIAL SUB-LEDGERS & OPERATIONAL VIEWS ─────────────────────────────
+// ── 5. COMMERCIAL & OPERATIONS VIEWS ──────────────────────────────────────────
 function ExpensesView({ expenses }) {
   return (
     <div className="table-wrap">
@@ -998,8 +1036,7 @@ function ExpensesView({ expenses }) {
           {expenses.map(e => (
             <tr key={e.id}>
               <td className="mono" style={{ color:"var(--accent)" }}>{e.expNo}</td>
-              <td className="mono">{e.date}</td>
-              <td><BadgeComponent type="muted">{e.category}</BadgeComponent></td>
+              <td className="mono">{e.date}</td><td><BadgeComponent type="muted">{e.category}</BadgeComponent></td>
               <td>{e.description}</td>
               <td><BadgeComponent type={e.paymentMode === "cash" ? "amber" : "muted"}>{e.paymentMode}</BadgeComponent></td>
               <td className="r mono" style={{ color:"var(--red)", fontWeight: 700 }}>₹{e.amount.toLocaleString()}</td>
@@ -1033,7 +1070,7 @@ function MonthlyOpsCostsView({ expenses, setExpenses }) {
 
   return (
     <div className="config-card">
-      <h3>Monthly Recurring Operations Cost (Quick Entry)</h3>
+      <h3>Monthly Operations Quick Entry</h3>
       <div className="config-row">
         {OPS_CATS.map(c => (
           <FG key={c} label={`${c.toUpperCase()} (₹)`}>
@@ -1041,7 +1078,7 @@ function MonthlyOpsCostsView({ expenses, setExpenses }) {
           </FG>
         ))}
       </div>
-      <button className="btn btn-primary" style={{ marginTop: 14 }} onClick={save}>Sync Monthly Operating Overheads</button>
+      <button className="btn btn-primary" style={{ marginTop: 14 }} onClick={save}>Sync Overheads to Ledger</button>
     </div>
   );
 }
@@ -1167,7 +1204,7 @@ function CostConfigView({ costConfig, setCostConfig }) {
   return (
     <div className="config-card">
       <h3>Cost Configuration Standards</h3>
-      <p style={{ fontSize:12, color:"var(--text3)" }}>Configure bag, freight, and standard overhead metrics for automated P&L calculations.</p>
+      <p style={{ fontSize:12, color:"var(--text3)" }}>Configure standard overhead metrics for automated P&L calculations.</p>
     </div>
   );
 }
