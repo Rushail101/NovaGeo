@@ -971,6 +971,7 @@ function CounterpartyNameInput({ rawKeys, currentLabel, placeholder, onSave }) {
     />
   );
 }
+
 function BankStatementGroupingView({ bankBatches, setBankBatches, bankTxns, setBankTxns, bankLabels, setBankLabels, setCapitalItems, setExpenses, setPartnerCashbook }) {
   const [sheet, setSheet] = useState(null);
   const [map, setMap] = useState({ dateCol:"", descCol:"", mode:"separate", debitCol:"", creditCol:"", amountCol:"" });
@@ -1161,11 +1162,16 @@ function BankStatementGroupingView({ bankBatches, setBankBatches, bankTxns, setB
 
           <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
             {filtered.map(g => (
-              <div key={g.mergeKey} className="config-card" style={{ padding: 14 }}>
+              <div key={g.rawKeys[0]} className="config-card" style={{ padding: 14 }}>
                 <div style={{ display:"flex", gap:12, flexWrap:"wrap", alignItems:"flex-end", justifyContent:"space-between" }}>
                   <div style={{ display:"flex", gap:12, flexWrap:"wrap", flex:1, minWidth:280 }}>
-                    <FG label="Name this group">
-                      <input placeholder={g.rawKeys[0]} value={g.label} onChange={e => updateLabel(g.rawKeys, { label: e.target.value })} />
+                    <FG label="Name this group" note="Press Enter to save name">
+                      <CounterpartyNameInput
+                        rawKeys={g.rawKeys}
+                        currentLabel={g.label}
+                        placeholder={g.rawKeys[0]}
+                        onSave={updateLabel}
+                      />
                     </FG>
                     <FG label="Type">
                       <select value={g.type} onChange={e => updateLabel(g.rawKeys, { type: e.target.value })}>
