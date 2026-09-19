@@ -1217,22 +1217,53 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPa
   }, [bankLabels, partnerCashbook]);
 
   // 2. Partner metrics roll-up
+  // Partner metrics roll-up (Combines bank_txns AND partner_cashbook)
   const partnerSummaries = useMemo(() => {
     return partners.map(name => {
-      const records = (partnerCashbook || []).filter(e => e && e.partnerName === name);
-      
-      const capitalInjected = records
-        .filter(e => e.accountType === "capital" || e.type === "Capital Infusion")
-        .reduce((s, e) => s + (+e.amount || 0), 0);
+      // 1. Find all bank group keys associated with this partner's name
+      const matchedKeys = new Set(
+        Object.entries(bankLabels || {})
+          .filter(([key, meta]) => {
+            if (!meta) return false;
+            const labelName = (meta.label || key).trim().toLowerCase();
+            return meta.type === "owner" && labelName === name.trim().toLowerCase();
+          })
+          .map(([key]) => key)
+      );
 
-      const cashSpentOnSite = records
+      // 2. Sum directly from imported bank statement transactions
+      const bankCredits = (bankTxns || [])
+        .filter(t => t && matchedKeys.has(t.key))
+        .reduce((sum, t) => sum + (+t.credit || 0), 0);
+
+      const bankDebits = (bankTxns || [])
+        .filter(t => t && matchedKeys.has(t.key))
+        .reduce((sum, t) => sum + (+t.debit || 0), 0);
+
+      // 3. Include off-book manual entries from partner_cashbook
+      const cashbookRecords = (partnerCashbook || []).filter(
+        e => e && e.partnerName && e.partnerName.trim().toLowerCase() === name.trim().toLowerCase()
+      );
+
+      const manualInfusions = cashbookRecords
+        .filter(e => !e.bankTxnId && (e.accountType === "capital" || e.type === "Capital Infusion"))
+        .reduce((sum, e) => sum + (+e.amount || 0), 0);
+
+      const manualDrawings = cashbookRecords
+        .filter(e => !e.bankTxnId && e.type === "Drawings")
+        .reduce((sum, e) => sum + (+e.amount || 0), 0);
+
+      const cashSpentOnSite = cashbookRecords
         .filter(e => e.type === "Direct Cash Expense" || e.type === "Expense Reimbursement")
-        .reduce((s, e) => s + (+e.amount || 0), 0);
+        .reduce((sum, e) => sum + (+e.amount || 0), 0);
 
-      const drawingsTaken = records
-        .filter(e => e.type === "Drawings")
-        .reduce((s, e) => s + (+e.amount || 0), 0);
+      // Total Capital = Bank Inward Deposits + Manual Cash Injections
+      const capitalInjected = bankCredits + manualInfusions;
+      
+      // Total Drawings = Bank Withdrawals by Partner + Manual Cash Drawings
+      const drawingsTaken = bankDebits + manualDrawings;
 
+      // Net Standing = (Capital + Site Expenses) - Drawings
       const netStanding = (capitalInjected + cashSpentOnSite) - drawingsTaken;
 
       return {
@@ -1241,10 +1272,9 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPa
         cashSpentOnSite,
         drawingsTaken,
         netStanding,
-        txnCount: records.length,
       };
     }).sort((a, b) => b.capitalInjected - a.capitalInjected);
-  }, [partners, partnerCashbook]);
+  }, [partners, bankTxns, bankLabels, partnerCashbook]);
 
   const totalCapitalAll = partnerSummaries.reduce((s, p) => s + p.capitalInjected, 0);
   const totalCashSpentAll = partnerSummaries.reduce((s, p) => s + p.cashSpentOnSite, 0);
