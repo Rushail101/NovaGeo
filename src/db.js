@@ -27,6 +27,7 @@ export async function loadAll() {
     costConfigRows,
     qcTests, samples,
     maintLogs,
+    partnerCashbook,
   ] = await Promise.all([
     q(supabase.from('vehicles').select('*').order('id')),
     q(supabase.from('customers').select('*').order('name')),
@@ -52,9 +53,9 @@ export async function loadAll() {
     q(supabase.from('qc_tests').select('*').order('t_date', { ascending: false })),
     q(supabase.from('samples').select('*').order('s_date', { ascending: false })),
     q(supabase.from('maint_logs').select('*, equipment(code,name)').order('log_date', { ascending: false })),
+    q(supabase.from('partner_cashbook').select('*').order('entry_date', { ascending: false })),
   ]);
 
-  // Transform DB rows → App state format
   const appVehicles = vehicles.map(v => ({
     id: v.id, vehicleNo: v.vehicle_no, type: v.type,
     tareWeight: +v.tare_weight_kg, owner: v.owner, phone: v.phone,
@@ -202,6 +203,7 @@ export async function loadAll() {
     category: e.category, amount: +e.amount,
     description: e.description || '', paidTo: e.paid_to || '',
     reference: e.reference || '', opsAuto: e.ops_auto,
+    bankTxnId: e.bank_txn_id,
   }));
 
   const appCapitalItems = capitalItems.map(c => ({
@@ -209,6 +211,7 @@ export async function loadAll() {
     category: c.category, description: c.description,
     amount: +c.amount, paidTo: c.paid_to || '',
     reference: c.reference || '', fundedBy: c.funded_by,
+    bankTxnId: c.bank_txn_id,
   }));
 
   const appBankBatches = bankBatches.map(b => ({
@@ -268,6 +271,16 @@ export async function loadAll() {
     remarks: s.remarks || '',
   }));
 
+  const appPartnerCashbook = partnerCashbook.map(p => ({
+    id: p.id,
+    partnerName: p.partner_name,
+    entryDate: p.entry_date,
+    type: p.type,
+    amount: +p.amount,
+    bankTxnId: p.bank_txn_id,
+    remarks: p.remarks || '',
+  }));
+
   return {
     vehicles: appVehicles, customers: appCustomers,
     grades: appGrades, suppliers: appSuppliers,
@@ -280,6 +293,7 @@ export async function loadAll() {
     bankBatches: appBankBatches, bankTxns: appBankTxns,
     bankLabels: appBankLabels, costConfig: appCostConfig,
     qcTests: appQcTests, samples: appSamples,
+    partnerCashbook: appPartnerCashbook,
   };
 }
 
@@ -520,6 +534,7 @@ export async function saveExpense(data) {
     description: data.description, paid_to: data.paidTo || null,
     reference: data.reference || null, ops_auto: !!data.opsAuto,
     exp_no: data.expNo || null,
+    bank_txn_id: data.bankTxnId || null,
   };
   const e = await q1(supabase.from('expenses').insert(row).select().single());
   return {
@@ -527,6 +542,7 @@ export async function saveExpense(data) {
     category: e.category, amount: +e.amount,
     description: e.description || '', paidTo: e.paid_to || '',
     reference: e.reference || '', opsAuto: e.ops_auto,
+    bankTxnId: e.bank_txn_id,
   };
 }
 export async function deleteExpense(id) { await supabase.from('expenses').delete().eq('id', id); }
@@ -564,6 +580,7 @@ export async function saveCapitalItem(data) {
     description: data.description, amount: +data.amount,
     paid_to: data.paidTo || null, reference: data.reference || null,
     funded_by: data.fundedBy,
+    bank_txn_id: data.bankTxnId || null,
   };
   const c = await q1(supabase.from('capital_items').insert(row).select().single());
   return {
@@ -571,28 +588,9 @@ export async function saveCapitalItem(data) {
     category: c.category, description: c.description,
     amount: +c.amount, paidTo: c.paid_to || '',
     reference: c.reference || '', fundedBy: c.funded_by,
+    bankTxnId: c.bank_txn_id,
   };
 }
-
-export async function promoteTxnToCapital(txn, category = "machinery", fundedBy = "own") {
-  const row = {
-    c_date: txn.date || txn.txn_date,
-    category: category,
-    description: txn.description,
-    amount: +txn.debit,
-    paid_to: txn.key || null,
-    reference: txn.refNo || txn.reference || null,
-    funded_by: fundedBy,
-  };
-  const c = await q1(supabase.from('capital_items').insert(row).select().single());
-  return {
-    id: c.id, capNo: c.cap_no, date: c.c_date,
-    category: c.category, description: c.description,
-    amount: +c.amount, paidTo: c.paid_to || '',
-    reference: c.reference || '', fundedBy: c.funded_by,
-  };
-}
-
 export async function deleteCapitalItem(id) { await supabase.from('capital_items').delete().eq('id', id); }
 
 // ── BANK STATEMENT ────────────────────────────────────────────────────────────
@@ -641,6 +639,71 @@ export async function updateBankLabel(groupKey, patch) {
 
 export async function updateBankLabels(groupKeys, patch) {
   await Promise.all(groupKeys.map(k => updateBankLabel(k, patch)));
+}
+
+// ── LINKED TRANSACTIONS (Promote from Bank Statement) ─────────────────────────
+export async function promoteTxnToCapital(txn, category = "machinery", fundedBy = "own") {
+  const row = {
+    c_date: txn.date || txn.txn_date,
+    category: category,
+    description: txn.description,
+    amount: +txn.debit,
+    paid_to: txn.key || null,
+    reference: txn.refNo || txn.reference || null,
+    funded_by: fundedBy,
+    bank_txn_id: txn.id,
+  };
+  const c = await q1(supabase.from('capital_items').insert(row).select().single());
+  return {
+    id: c.id, capNo: c.cap_no, date: c.c_date,
+    category: c.category, description: c.description,
+    amount: +c.amount, paidTo: c.paid_to || '',
+    reference: c.reference || '', fundedBy: c.funded_by,
+    bankTxnId: c.bank_txn_id,
+  };
+}
+
+export async function promoteTxnToExpense(txn, category = "misc") {
+  const row = {
+    e_date: txn.date || txn.txn_date,
+    category: category,
+    amount: +txn.debit,
+    description: txn.description,
+    paid_to: txn.key || null,
+    reference: txn.refNo || txn.reference || null,
+    ops_auto: false,
+    bank_txn_id: txn.id,
+  };
+  const e = await q1(supabase.from('expenses').insert(row).select().single());
+  return {
+    id: e.id, expNo: e.exp_no, date: e.e_date,
+    category: e.category, amount: +e.amount,
+    description: e.description || '', paidTo: e.paid_to || '',
+    reference: e.reference || '', opsAuto: e.ops_auto,
+    bankTxnId: e.bank_txn_id,
+  };
+}
+
+export async function logPartnerCashbookEntry(txn, partnerName, type) {
+  const amount = type === "Capital Infusion" ? +txn.credit : +txn.debit;
+  const row = {
+    partner_name: partnerName,
+    entry_date: txn.date || txn.txn_date,
+    type: type,
+    amount: amount,
+    bank_txn_id: txn.id,
+    remarks: txn.description,
+  };
+  const p = await q1(supabase.from('partner_cashbook').insert(row).select().single());
+  return {
+    id: p.id,
+    partnerName: p.partner_name,
+    entryDate: p.entry_date,
+    type: p.type,
+    amount: +p.amount,
+    bankTxnId: p.bank_txn_id,
+    remarks: p.remarks || '',
+  };
 }
 
 // ── COST CONFIG ───────────────────────────────────────────────────────────────
