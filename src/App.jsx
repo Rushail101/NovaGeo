@@ -277,6 +277,15 @@ const nextLotNum=(lots,date)=>{
   return `LOT-${fy}-${String(existing.length+1).padStart(4,"0")}`;
 };
 const addDays=(dateStr,n)=>{ const d=new Date(dateStr); d.setDate(d.getDate()+n); return d.toISOString().split("T")[0]; };
+// Indian fiscal year: Apr 1 – Mar 31, labelled "2026-27" for the year starting Apr 2026.
+const getFY=dateStr=>{
+  if(!dateStr)return "";
+  const d=new Date(dateStr); const y=d.getFullYear(), m=d.getMonth()+1;
+  const startYear = m>=4 ? y : y-1;
+  return `${startYear}-${String((startYear+1)%100).padStart(2,"0")}`;
+};
+const currentFY=()=>getFY(today());
+const fyRange=fy=>{ const startYear=+fy.split("-")[0]; return {start:`${startYear}-04-01`,end:`${startYear+1}-03-31`}; };
 const calcNextDue=(lastDone,intervalType,intervalValue)=>{
   if(!lastDone) return today();
   const n = +intervalValue||1;
@@ -375,6 +384,7 @@ const NAV=[
   {id:"expenses",   label:"Expenses",    icon:"💸",  group:"Reports"},
   {id:"capital",    label:"Capital / Infra",icon:"🏗", group:"Reports"},
   {id:"bankstatement",label:"Bank Statement",icon:"🏦", group:"Reports"},
+  {id:"partners",     label:"Partners & Capital",icon:"🤝", group:"Reports"},
   {id:"rpt-daily",  label:"Daily Report",icon:"📅",  group:"Reports"},
   {id:"rpt-stock",  label:"Stock Report",icon:"📦",  group:"Reports"},
   {id:"vehicles",   label:"Vehicles",    icon:"◉", group:"Masters"},
@@ -3097,20 +3107,43 @@ function BankStatementGrouping({bankTxns,setBankTxns,bankLabels,setBankLabels}){
       .sort((a,b)=>(b.totalDebit+b.totalCredit)-(a.totalDebit+a.totalCredit));
   },[bankTxns,bankLabels]);
 
-  const filtered=groups.filter(g=>{
+  // Two raw narration-groups (different keys) that end up with the SAME typed
+  // name collapse into one card here — so labelling both "Ramesh Traders"
+  // is how you merge a payee that split across two groups.
+  const mergedGroups=useMemo(()=>{
+    const m={};
+    groups.forEach(g=>{
+      const mergeKey=g.label.trim()?g.label.trim().toLowerCase():`__raw__${g.key}`;
+      if(!m[mergeKey])m[mergeKey]={mergeKey,label:g.label,type:g.type,rawKeys:[],txns:[],totalDebit:0,totalCredit:0};
+      m[mergeKey].rawKeys.push(g.key);
+      m[mergeKey].txns.push(...g.txns);
+      m[mergeKey].totalDebit+=g.totalDebit;
+      m[mergeKey].totalCredit+=g.totalCredit;
+    });
+    return Object.values(m).map(mg=>({...mg,net:mg.totalCredit-mg.totalDebit}))
+      .sort((a,b)=>(b.totalDebit+b.totalCredit)-(a.totalDebit+a.totalCredit));
+  },[groups]);
+
+  const filtered=mergedGroups.filter(g=>{
     if(unlabeledOnly&&g.label)return false;
     if(!search)return true;
     const s=search.toLowerCase();
-    return g.key.toLowerCase().includes(s)||g.label.toLowerCase().includes(s)||g.txns.some(t=>t.description.toLowerCase().includes(s));
+    return g.rawKeys.some(k=>k.toLowerCase().includes(s))||g.label.toLowerCase().includes(s)||g.txns.some(t=>t.description.toLowerCase().includes(s));
   });
 
-  function updateLabel(key,patch){
-    setBankLabels(bl=>({...bl,[key]:{...bl[key],...patch}}));
+  // patch applies to every raw key folded into this card, so a merged
+  // group's name/type stays in sync across all the narration variants it covers
+  function updateLabel(rawKeys,patch){
+    setBankLabels(bl=>{
+      const next={...bl};
+      rawKeys.forEach(k=>{next[k]={...next[k],...patch};});
+      return next;
+    });
   }
 
   const totalPaid=bankTxns.reduce((s,t)=>s+t.debit,0);
   const totalRecv=bankTxns.reduce((s,t)=>s+t.credit,0);
-  const namedGroups=groups.filter(g=>g.label).length;
+  const namedGroups=mergedGroups.filter(g=>g.label).length;
 
   return(
     <div>
@@ -3216,7 +3249,7 @@ function BankStatementGrouping({bankTxns,setBankTxns,bankLabels,setBankLabels}){
         <StatCard label="Transactions"  value={bankTxns.length} sub={`${batches.length} statement(s)`} color="blue"/>
         <StatCard label="Total Paid Out"value={fmt(totalPaid)}  sub="debits"   color="red"/>
         <StatCard label="Total Received"value={fmt(totalRecv)}  sub="credits"  color="green"/>
-        <StatCard label="Groups Named"  value={`${namedGroups} / ${groups.length}`} sub="counterparties" color="purple"/>
+        <StatCard label="Groups Named"  value={`${namedGroups} / ${mergedGroups.length}`} sub="counterparties" color="purple"/>
       </div>
 
       {bankTxns.length>0&&(
@@ -3231,14 +3264,14 @@ function BankStatementGrouping({bankTxns,setBankTxns,bankLabels,setBankLabels}){
             {filtered.map(g=>{
               const typeInfo=CP_TYPES.find(t=>t.id===g.type);
               return(
-                <div key={g.key} className="config-card" style={{padding:14}}>
+                <div key={g.mergeKey} className="config-card" style={{padding:14}}>
                   <div style={{display:"flex",gap:12,flexWrap:"wrap",alignItems:"flex-end",justifyContent:"space-between"}}>
                     <div style={{display:"flex",gap:12,flexWrap:"wrap",flex:1,minWidth:280}}>
                       <FG label="Name this group">
-                        <input placeholder={g.key} value={g.label} onChange={e=>updateLabel(g.key,{label:e.target.value})}/>
+                        <input placeholder={g.rawKeys[0]} value={g.label} onChange={e=>updateLabel(g.rawKeys,{label:e.target.value})}/>
                       </FG>
                       <FG label="Type">
-                        <select value={g.type} onChange={e=>updateLabel(g.key,{type:e.target.value})}>
+                        <select value={g.type} onChange={e=>updateLabel(g.rawKeys,{type:e.target.value})}>
                           {CP_TYPES.map(t=><option key={t.id} value={t.id}>{t.label}</option>)}
                         </select>
                       </FG>
@@ -3250,10 +3283,12 @@ function BankStatementGrouping({bankTxns,setBankTxns,bankLabels,setBankLabels}){
                     </div>
                   </div>
                   <div style={{marginTop:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                    <span style={{fontSize:11,color:"var(--text3)",fontFamily:"var(--mono)"}}>{g.key}</span>
-                    <button className="btn btn-ghost btn-sm" onClick={()=>setExpanded(x=>x===g.key?null:g.key)}>{expanded===g.key?"Hide":"Show"} transactions</button>
+                    <span style={{fontSize:11,color:"var(--text3)",fontFamily:"var(--mono)"}}>
+                      {g.rawKeys.length>1?`Merged from ${g.rawKeys.length} narration groups`:g.rawKeys[0]}
+                    </span>
+                    <button className="btn btn-ghost btn-sm" onClick={()=>setExpanded(x=>x===g.mergeKey?null:g.mergeKey)}>{expanded===g.mergeKey?"Hide":"Show"} transactions</button>
                   </div>
-                  {expanded===g.key&&(
+                  {expanded===g.mergeKey&&(
                     <div className="table-wrap" style={{marginTop:10}}>
                       <table>
                         <thead><tr><th>Date</th><th>Narration</th><th className="r">Debit</th><th className="r">Credit</th></tr></thead>
@@ -3276,6 +3311,154 @@ function BankStatementGrouping({bankTxns,setBankTxns,bankLabels,setBankLabels}){
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+// ── PARTNERS & CAPITAL DASHBOARD ──────────────────────────────────────────────
+// Built on top of the Bank Statement grouping — "partners" are whichever
+// counterparties you've tagged as Owner / Capital there, "vendors" whichever
+// you've tagged Vendor / Supplier. Capital figures are always all-time
+// (contributions are a running total, not a per-period thing); vendor
+// payments and the monthly trend respect the fiscal-year picker.
+function PartnersCapitalDashboard({bankTxns,bankLabels}){
+  const [fy,setFy]=useState(currentFY());
+
+  const merged=useMemo(()=>{
+    const raw={};
+    bankTxns.forEach(t=>{
+      if(!raw[t.key])raw[t.key]={key:t.key,txns:[],totalDebit:0,totalCredit:0};
+      raw[t.key].txns.push(t); raw[t.key].totalDebit+=t.debit; raw[t.key].totalCredit+=t.credit;
+    });
+    const list=Object.values(raw).map(g=>({...g,label:bankLabels[g.key]?.label||"",type:bankLabels[g.key]?.type||"unlabeled"}));
+    const m={};
+    list.forEach(g=>{
+      const mergeKey=g.label.trim()?g.label.trim().toLowerCase():`__raw__${g.key}`;
+      if(!m[mergeKey])m[mergeKey]={mergeKey,label:g.label||g.key,type:g.type,rawKeys:[],txns:[],totalDebit:0,totalCredit:0};
+      m[mergeKey].rawKeys.push(g.key);
+      m[mergeKey].txns.push(...g.txns);
+      m[mergeKey].totalDebit+=g.totalDebit;
+      m[mergeKey].totalCredit+=g.totalCredit;
+    });
+    return Object.values(m);
+  },[bankTxns,bankLabels]);
+
+  const fyOptions=useMemo(()=>{
+    const set=new Set(bankTxns.map(t=>getFY(t.date)).filter(Boolean));
+    set.add(currentFY());
+    return Array.from(set).sort().reverse();
+  },[bankTxns]);
+
+  const range=fy==="all"?null:fyRange(fy);
+  const inRange=d=>!range||(d>=range.start&&d<=range.end);
+  const periodLabel=fy==="all"?"All Time":`FY ${fy}`;
+
+  // Capital — all-time, not period-filtered
+  const partners=merged.filter(g=>g.type==="owner"&&g.totalCredit>0).sort((a,b)=>b.totalCredit-a.totalCredit);
+  const totalCapital=partners.reduce((s,p)=>s+p.totalCredit,0);
+  const maxPartner=partners[0]?.totalCredit||1;
+
+  // Vendors — respects the FY picker
+  const vendors=merged.filter(g=>g.type==="vendor")
+    .map(g=>({...g,periodDebit:g.txns.filter(t=>inRange(t.date)).reduce((s,t)=>s+t.debit,0)}))
+    .filter(g=>g.periodDebit>0).sort((a,b)=>b.periodDebit-a.periodDebit);
+  const totalVendorPaid=vendors.reduce((s,v)=>s+v.periodDebit,0);
+  const maxVendor=vendors[0]?.periodDebit||1;
+
+  // Monthly trend — respects the FY picker
+  const monthlyMap={};
+  bankTxns.forEach(t=>{
+    if(!inRange(t.date))return;
+    const ym=t.date.slice(0,7);
+    if(!monthlyMap[ym])monthlyMap[ym]={ym,credit:0,debit:0};
+    monthlyMap[ym].credit+=t.credit; monthlyMap[ym].debit+=t.debit;
+  });
+  const monthly=Object.values(monthlyMap).sort((a,b)=>a.ym.localeCompare(b.ym));
+  const maxMonthly=Math.max(1,...monthly.map(m=>Math.max(m.credit,m.debit)));
+
+  if(bankTxns.length===0){
+    return(
+      <div>
+        <div style={{marginBottom:20}}>
+          <h3 style={{fontSize:15,fontWeight:700,marginBottom:4}}>Partners & Capital</h3>
+          <p style={{fontSize:12,color:"var(--text3)"}}>Built from your Bank Statement counterparties — tag some as "Owner / Capital" or "Vendor / Supplier" first.</p>
+        </div>
+        <EmptyState icon="🤝" message="No bank statement data yet" sub="Import a statement under Bank Statement first, then tag counterparties there."/>
+      </div>
+    );
+  }
+
+  return(
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",flexWrap:"wrap",gap:14,marginBottom:20}}>
+        <div>
+          <h3 style={{fontSize:15,fontWeight:700,marginBottom:4}}>Partners & Capital</h3>
+          <p style={{fontSize:12,color:"var(--text3)"}}>Capital figures are all-time. Vendor payments and the trend below follow the period picker.</p>
+        </div>
+        <FG label="Period">
+          <select value={fy} onChange={e=>setFy(e.target.value)}>
+            {fyOptions.map(f=><option key={f} value={f}>FY {f}</option>)}
+            <option value="all">All Time</option>
+          </select>
+        </FG>
+      </div>
+
+      <div className="stats-grid">
+        <StatCard label="Total Capital Invested" value={fmt(totalCapital)} sub="all-time, all partners" color="accent"/>
+        <StatCard label="Partners"               value={partners.length}   sub="tagged Owner / Capital" color="purple"/>
+        <StatCard label={`Paid to Vendors — ${periodLabel}`} value={fmt(totalVendorPaid)} sub={`${vendors.length} vendors`} color="red"/>
+        <StatCard label="Net Cash Flow"          value={fmt(monthly.reduce((s,m)=>s+m.credit-m.debit,0))} sub={periodLabel} color="blue"/>
+      </div>
+
+      <div className="report-section" style={{marginBottom:20}}>
+        <h3>Capital by Partner <span style={{fontWeight:400,color:"var(--text3)",fontSize:11}}>(all-time)</span></h3>
+        {partners.length===0
+          ?<EmptyState icon="🤝" message="No partners tagged yet" sub="Tag a counterparty as 'Owner / Capital' under Bank Statement."/>
+          :partners.map(p=>(
+            <div key={p.mergeKey} className="mini-bar-row">
+              <span className="label">{p.label}</span>
+              <div className="track"><div className="fill" style={{width:`${(p.totalCredit/maxPartner)*100}%`,background:"var(--accent)"}}/></div>
+              <span className="val">{fmt(p.totalCredit)}</span>
+            </div>
+          ))
+        }
+      </div>
+
+      <div className="report-section" style={{marginBottom:20}}>
+        <h3>Vendor Payments <span style={{fontWeight:400,color:"var(--text3)",fontSize:11}}>({periodLabel})</span></h3>
+        {vendors.length===0
+          ?<EmptyState icon="📦" message="No vendor payments in this period" sub="Tag counterparties as 'Vendor / Supplier' under Bank Statement, or try a different period."/>
+          :vendors.map(v=>(
+            <div key={v.mergeKey} className="mini-bar-row">
+              <span className="label">{v.label}</span>
+              <div className="track"><div className="fill" style={{width:`${(v.periodDebit/maxVendor)*100}%`,background:"var(--red)"}}/></div>
+              <span className="val">{fmt(v.periodDebit)}</span>
+            </div>
+          ))
+        }
+      </div>
+
+      <div className="report-section">
+        <h3>Monthly Cash In vs Out <span style={{fontWeight:400,color:"var(--text3)",fontSize:11}}>({periodLabel})</span></h3>
+        {monthly.length===0
+          ?<EmptyState icon="📊" message="No transactions in this period"/>
+          :monthly.map(m=>(
+            <div key={m.ym} style={{marginBottom:14,paddingBottom:14,borderBottom:"1px solid var(--border)"}}>
+              <div style={{fontSize:11.5,color:"var(--text2)",fontFamily:"var(--mono)",marginBottom:6}}>{m.ym}</div>
+              <div className="mini-bar-row">
+                <span className="label">In</span>
+                <div className="track"><div className="fill" style={{width:`${(m.credit/maxMonthly)*100}%`,background:"var(--green)"}}/></div>
+                <span className="val">{fmt(m.credit)}</span>
+              </div>
+              <div className="mini-bar-row">
+                <span className="label">Out</span>
+                <div className="track"><div className="fill" style={{width:`${(m.debit/maxMonthly)*100}%`,background:"var(--red)"}}/></div>
+                <span className="val">{fmt(m.debit)}</span>
+              </div>
+            </div>
+          ))
+        }
+      </div>
     </div>
   );
 }
@@ -3370,6 +3553,7 @@ export default function App(){
             {view==="expenses"   &&<ExpensesView expenses={expenses} setExpenses={setExpenses}/>}
             {view==="capital"    &&<CapitalRegister capitalItems={capitalItems} setCapitalItems={setCapitalItems}/>}
             {view==="bankstatement" &&<BankStatementGrouping bankTxns={bankTxns} setBankTxns={setBankTxns} bankLabels={bankLabels} setBankLabels={setBankLabels}/>}
+            {view==="partners"   &&<PartnersCapitalDashboard bankTxns={bankTxns} bankLabels={bankLabels}/>}
             {view==="rpt-daily"  &&<DailyReport weighments={weighments} productionEntries={productionEntries} boulderReceipts={boulderReceipts} expenses={expenses} grades={grades}/>}
             {view==="rpt-stock"  &&<StockReport grades={grades} boulderReceipts={boulderReceipts} productionEntries={productionEntries} weighments={weighments}/>}
             {view==="vehicles"   &&<VehicleMaster vehicles={vehicles} setVehicles={setVehicles}/>}
