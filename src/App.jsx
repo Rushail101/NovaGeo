@@ -109,6 +109,9 @@ tr:hover td{background:rgba(255,255,255,.02)}
 .pill-tabs{display:flex;gap:4px;background:var(--bg3);border-radius:var(--r2);padding:4px;margin-bottom:16px;width:fit-content}
 .pill-tab{padding:6px 16px;border-radius:var(--r);font-size:12px;font-weight:500;cursor:pointer;border:none;background:none;color:var(--text3);font-family:var(--font);transition:all .12s}
 .pill-tab.active{background:var(--bg2);color:var(--text);box-shadow:0 1px 4px rgba(0,0,0,.4)}
+.lot-chip{display:inline-flex;align-items:center;gap:5px;background:#0a1a00;border:1px solid #1e3a00;border-radius:var(--r);padding:3px 10px;font-family:var(--mono);font-size:11px;color:var(--accent)}
+.output-rows{display:flex;flex-direction:column;gap:8px}
+.output-row{display:grid;grid-template-columns:1fr 1fr auto;gap:8px;align-items:end}
 `;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -189,7 +192,7 @@ function computeStock(grades, receipts, entries, weighments) {
   entries.forEach(pe => {
     const b = grades.find(g => g.isBoulder);
     if (b && s[b.id]) s[b.id].produced -= pe.boulderConsumedMT;
-    pe.outputs.forEach(o => { if (s[o.gradeId]) s[o.gradeId].produced += o.quantityMT; });
+    (pe.outputs || []).forEach(o => { if (s[o.gradeId]) s[o.gradeId].produced += o.quantityMT; });
   });
   weighments.forEach(w => {
     const mt = (w.netWeight || 0) / 1000;
@@ -201,7 +204,7 @@ function computeStock(grades, receipts, entries, weighments) {
   return s;
 }
 
-// ── PDF.JS LOADER ─────────────────────────────────────────────────────────────
+// ── PDF.js Loader ─────────────────────────────────────────────────────────────
 let _pdfjsPromise = null;
 function loadPdfjs() {
   if (!_pdfjsPromise) {
@@ -289,7 +292,7 @@ async function parsePdfStatement(file) {
   };
 }
 
-// ── Navigation Map ────────────────────────────────────────────────────────────
+// ── Navigation ────────────────────────────────────────────────────────────────
 const NAV = [
   { id:"dashboard", label:"Dashboard", icon:"◈", group:null },
   { id:"weighment", label:"Weighment", icon:"⚖", group:"Operations" },
@@ -366,14 +369,14 @@ export default function App() {
     async function init() {
       try {
         const d = await db.loadAll();
-        setVehicles(d.vehicles); setCustomers(d.customers); setGrades(d.grades);
-        setSuppliers(d.suppliers); setEquipment(d.equipment); setMaintTasks(d.maintTasks);
-        setMaintLogs(d.maintLogs); setWeighments(d.weighments); setBoulderReceipts(d.boulderReceipts);
-        setLots(d.lots); setProductionEntries(d.productionEntries); setShiftLogs(d.shiftLogs);
-        setPurchases(d.purchases); setExpenses(d.expenses); setCapitalItems(d.capitalItems);
-        setBankBatches(d.bankBatches); setBankTxns(d.bankTxns); setBankLabels(d.bankLabels);
-        setCostConfig(d.costConfig); setQcTests(d.qcTests); setSamples(d.samples);
-        setPartnerCashbook(d.partnerCashbook);
+        setVehicles(d.vehicles || []); setCustomers(d.customers || []); setGrades(d.grades || []);
+        setSuppliers(d.suppliers || []); setEquipment(d.equipment || []); setMaintTasks(d.maintTasks || []);
+        setMaintLogs(d.maintLogs || []); setWeighments(d.weighments || []); setBoulderReceipts(d.boulderReceipts || []);
+        setLots(d.lots || []); setProductionEntries(d.productionEntries || []); setShiftLogs(d.shiftLogs || []);
+        setPurchases(d.purchases || []); setExpenses(d.expenses || []); setCapitalItems(d.capitalItems || []);
+        setBankBatches(d.bankBatches || []); setBankTxns(d.bankTxns || []); setBankLabels(d.bankLabels || {});
+        setCostConfig(d.costConfig || {}); setQcTests(d.qcTests || []); setSamples(d.samples || []);
+        setPartnerCashbook(d.partnerCashbook || []);
       } catch (err) {
         console.error("Database sync failed:", err);
       } finally {
@@ -435,17 +438,18 @@ export default function App() {
 
           <div className="content">
             {view === "dashboard" && <DashboardView {...{ weighments, boulderReceipts, productionEntries, expenses, capitalItems, bankTxns, partnerCashbook }} />}
-            {view === "bankstatement" && <BankStatementGroupingView {...{ bankBatches, setBankBatches, bankTxns, setBankTxns, bankLabels, setBankLabels, setCapitalItems, setExpenses, setPartnerCashbook }} />}
-            {view === "partnercashbook" && <PartnerCashbookView {...{ partnerCashbook, setPartnerCashbook, bankLabels, setExpenses, setCapitalItems }} />}
-            {view === "balancesheet" && <BalanceSheetView {...{ capitalItems, bankTxns, partnerCashbook, purchases, expenses, weighments, grades, boulderReceipts, productionEntries, costConfig }} />}
-            {view === "capital" && <CapitalRegisterView {...{ capitalItems, setCapitalItems }} />}
-            {view === "expenses" && <ExpensesView {...{ expenses, setExpenses }} />}
-            {view === "opscosts" && <MonthlyOpsCostsView {...{ expenses, setExpenses }} />}
-            {view === "purchases" && <PurchasesView {...{ suppliers, purchases, setPurchases }} />}
             {view === "weighment" && <WeighmentsView {...{ vehicles, customers, grades, weighments, setWeighments }} />}
             {view === "boulder" && <BoulderInView {...{ suppliers, vehicles, boulderReceipts, setBoulderReceipts }} />}
             {view === "production" && <ProductionView {...{ grades, productionEntries, setProductionEntries, lots, setLots }} />}
             {view === "stock" && <StockLedgerView {...{ grades, boulderReceipts, productionEntries, weighments }} />}
+            {view === "shift" && <ShiftLogView {...{ grades, shiftLogs, setShiftLogs }} />}
+            {view === "purchases" && <PurchasesView {...{ suppliers, purchases, setPurchases }} />}
+            {view === "opscosts" && <MonthlyOpsCostsView {...{ expenses, setExpenses }} />}
+            {view === "expenses" && <ExpensesView {...{ expenses, setExpenses }} />}
+            {view === "capital" && <CapitalRegisterView {...{ capitalItems, setCapitalItems }} />}
+            {view === "bankstatement" && <BankStatementGroupingView {...{ bankBatches, setBankBatches, bankTxns, setBankTxns, bankLabels, setBankLabels, setCapitalItems, setExpenses, setPartnerCashbook }} />}
+            {view === "partnercashbook" && <PartnerCashbookView {...{ partnerCashbook, setPartnerCashbook, bankLabels, setExpenses, setCapitalItems }} />}
+            {view === "balancesheet" && <BalanceSheetView {...{ capitalItems, bankTxns, partnerCashbook, purchases, expenses, weighments, grades, boulderReceipts, productionEntries, costConfig }} />}
             {view === "costs" && <CostSheetView {...{ purchases, expenses, productionEntries, weighments, costConfig }} />}
             {view === "costconfig" && <CostConfigView {...{ costConfig, setCostConfig }} />}
             {view === "vehicles" && <MasterTableView title="Vehicles" noun="Vehicle" items={vehicles} setItems={setVehicles} saveFn={db.saveVehicle} delFn={db.deleteVehicle} fields={[{ key:"vehicleNo", label:"Vehicle Number", required:true },{ key:"type", label:"Type" },{ key:"tareWeight", label:"Tare Wt (kg)", required:true }]} cols={[{ label:"Vehicle", key:"vehicleNo" },{ label:"Type", key:"type" },{ label:"Tare Wt", key:"tareWeight" }]} />}
@@ -459,7 +463,462 @@ export default function App() {
   );
 }
 
-// ── BANK STATEMENT: THE ORIGINAL COUNTERPARTY GROUPING EXPERIENCE ────────────
+// ── OPERATIONS VIEWS WITH RESTORED CREATION MODALS ────────────────────────────
+
+function WeighmentsView({ vehicles, customers, grades, weighments, setWeighments }) {
+  const [open, setOpen] = useState(false);
+  const blank = { date:today(), time:nowTime(), vehicleId:"", customerId:"", gradeId:"", lotNo:"", grossWeight:"", tareWeight:"", purpose:"Sale", remarks:"" };
+  const [f, setF] = useState(blank);
+  const set = k => v => setF(x => ({ ...x, [k]: v }));
+  const pickV = id => { const v = vehicles.find(x => String(x.id) === String(id)); setF(x => ({ ...x, vehicleId:id, tareWeight: v ? String(v.tareWeight) : "" })); };
+  const net = () => { const g = parseFloat(f.grossWeight), t = parseFloat(f.tareWeight); return (!isNaN(g) && !isNaN(t)) ? g - t : null; };
+
+  async function save() {
+    if (!f.vehicleId || !f.gradeId || !f.grossWeight || !f.tareWeight) return alert("Vehicle, Grade, Gross, and Tare required.");
+    if (net() <= 0) return alert("Net weight must be positive.");
+    try {
+      const row = await db.saveWeighment(f);
+      setWeighments(ws => [row, ...ws]);
+      setOpen(false); setF(blank);
+    } catch (err) { alert(err.message); }
+  }
+
+  return (
+    <div>
+      <div className="filter-bar"><button className="btn btn-primary" onClick={() => setOpen(true)}>+ New Weighment Slip</button></div>
+      <div className="table-wrap">
+        <table>
+          <thead><tr><th>Slip #</th><th>Date/Time</th><th>Vehicle</th><th>Customer</th><th>Grade</th><th className="r">Gross</th><th className="r">Tare</th><th className="r">Net</th><th>Purpose</th></tr></thead>
+          <tbody>
+            {weighments.length === 0 ? (
+              <tr><td colSpan={9} style={{ textAlign:"center", color:"var(--text3)", padding:24 }}>No weighment slips logged yet</td></tr>
+            ) : (
+              weighments.map(w => (
+                <tr key={w.id}>
+                  <td className="mono" style={{ color:"var(--accent)" }}>{w.slipNo}</td>
+                  <td className="mono" style={{ fontSize:11, color:"var(--text3)" }}>{w.date} {w.time}</td>
+                  <td className="mono">{w.vehicleNo}</td><td>{w.customerName}</td>
+                  <td><BadgeComponent type="muted">{w.gradeCode}</BadgeComponent></td>
+                  <td className="r mono">{w.grossWeight} kg</td><td className="r mono">{w.tareWeight} kg</td>
+                  <td className="r mono" style={{ color:"var(--teal)", fontWeight:700 }}>{fmtWt(w.netWeight)}</td>
+                  <td><BadgeComponent type={w.purpose === "Sale" ? "green" : "blue"}>{w.purpose}</BadgeComponent></td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {open && (
+        <Modal title="New Weighment Slip" onClose={() => setOpen(false)} foot={<><button className="btn btn-ghost" onClick={() => setOpen(false)}>Cancel</button><button className="btn btn-primary" onClick={save}>Save Slip</button></>}>
+          <div className="form-row cols-2"><FG label="Date"><input type="date" value={f.date} onChange={e => set("date")(e.target.value)} /></FG><FG label="Time"><input type="time" value={f.time} onChange={e => set("time")(e.target.value)} /></FG></div>
+          <div className="form-row cols-2">
+            <FG label="Vehicle *"><select value={f.vehicleId} onChange={e => pickV(e.target.value)}><option value="">Select...</option>{vehicles.map(v => <option key={v.id} value={v.id}>{v.vehicleNo} ({v.type})</option>)}</select></FG>
+            <FG label="Customer"><select value={f.customerId} onChange={e => set("customerId")(e.target.value)}><option value="">Select...</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></FG>
+          </div>
+          <div className="form-row cols-2">
+            <FG label="Grade *"><select value={f.gradeId} onChange={e => set("gradeId")(e.target.value)}><option value="">Select...</option>{grades.map(g => <option key={g.id} value={g.id}>[{g.code}] {g.name}</option>)}</select></FG>
+            <FG label="Purpose"><select value={f.purpose} onChange={e => set("purpose")(e.target.value)}>{["Sale","Inward (Raw)","Stock Transfer"].map(p => <option key={p}>{p}</option>)}</select></FG>
+          </div>
+          <div className="form-row cols-2">
+            <FG label="Gross Weight (kg) *"><input type="number" value={f.grossWeight} onChange={e => set("grossWeight")(e.target.value)} /></FG>
+            <FG label="Tare Weight (kg) *"><input type="number" value={f.tareWeight} onChange={e => set("tareWeight")(e.target.value)} /></FG>
+          </div>
+          <div className="form-row"><FG label="Remarks"><input value={f.remarks} onChange={e => set("remarks")(e.target.value)} /></FG></div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function BoulderInView({ suppliers, vehicles, boulderReceipts, setBoulderReceipts }) {
+  const [open, setOpen] = useState(false);
+  const blank = { date:today(), vehicleId:"", supplierId:"", quantityMT:"", royaltyNo:"", challanNo:"", remarks:"" };
+  const [f, setF] = useState(blank);
+  const set = k => v => setF(x => ({ ...x, [k]: v }));
+
+  async function save() {
+    if (!f.supplierId || !f.quantityMT) return alert("Supplier and Quantity required.");
+    try {
+      const row = await db.saveBoulderReceipt(f);
+      setBoulderReceipts(rs => [row, ...rs]);
+      setOpen(false); setF(blank);
+    } catch (err) { alert(err.message); }
+  }
+
+  return (
+    <div>
+      <div className="filter-bar"><button className="btn btn-primary" onClick={() => setOpen(true)}>+ New Boulder Receipt</button></div>
+      <div className="table-wrap">
+        <table>
+          <thead><tr><th>Receipt #</th><th>Date</th><th>Supplier</th><th>Vehicle</th><th>Royalty #</th><th>Challan #</th><th className="r">Qty (MT)</th></tr></thead>
+          <tbody>
+            {boulderReceipts.length === 0 ? (
+              <tr><td colSpan={7} style={{ textAlign:"center", color:"var(--text3)", padding:24 }}>No boulder deliveries recorded yet</td></tr>
+            ) : (
+              boulderReceipts.map(r => (
+                <tr key={r.id}>
+                  <td className="mono" style={{ color:"var(--accent)" }}>{r.receiptNo}</td>
+                  <td className="mono" style={{ fontSize:11, color:"var(--text3)" }}>{r.date}</td>
+                  <td>{r.supplierName}</td><td className="mono">{r.vehicleNo}</td><td>{r.royaltyNo || "—"}</td><td>{r.challanNo || "—"}</td>
+                  <td className="r mono" style={{ color:"var(--teal)", fontWeight:700 }}>{fmtMT(r.quantityMT)}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {open && (
+        <Modal title="New Raw Boulder Receipt" onClose={() => setOpen(false)} foot={<><button className="btn btn-ghost" onClick={() => setOpen(false)}>Cancel</button><button className="btn btn-primary" onClick={save}>Save Receipt</button></>}>
+          <div className="form-row cols-2"><FG label="Date"><input type="date" value={f.date} onChange={e => set("date")(e.target.value)} /></FG><FG label="Supplier *"><select value={f.supplierId} onChange={e => set("supplierId")(e.target.value)}><option value="">Select...</option>{suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></FG></div>
+          <div className="form-row cols-2"><FG label="Vehicle"><select value={f.vehicleId} onChange={e => set("vehicleId")(e.target.value)}><option value="">Select...</option>{vehicles.map(v => <option key={v.id} value={v.id}>{v.vehicleNo}</option>)}</select></FG><FG label="Quantity (MT) *"><input type="number" step="0.001" value={f.quantityMT} onChange={e => set("quantityMT")(e.target.value)} /></FG></div>
+          <div className="form-row cols-2"><FG label="Royalty Pass #"><input value={f.royaltyNo} onChange={e => set("royaltyNo")(e.target.value)} /></FG><FG label="Challan / Invoice #"><input value={f.challanNo} onChange={e => set("challanNo")(e.target.value)} /></FG></div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function ProductionView({ grades, productionEntries, setProductionEntries, lots, setLots }) {
+  const finished = grades.filter(g => !g.isBoulder);
+  const blankOut = () => ({ gradeId: finished[0]?.id || "", quantityMT: "" });
+  const blank = { date:today(), shift:SHIFTS[0], operator:OPERATORS[0], boulderConsumedMT:"", machineHours:"", idleHours:"0", outputs:[blankOut()], remarks:"" };
+  const [open, setOpen] = useState(false);
+  const [f, setF] = useState(blank);
+  const set = k => v => setF(x => ({ ...x, [k]: v }));
+  const setOut = (i, k, v) => setF(x => { const o = [...x.outputs]; o[i] = { ...o[i], [k]: v }; return { ...x, outputs: o }; });
+  const totalOut = f.outputs.reduce((s, o) => s + (parseFloat(o.quantityMT) || 0), 0);
+  const yieldPct = f.boulderConsumedMT > 0 ? ((totalOut / +f.boulderConsumedMT) * 100).toFixed(1) : null;
+
+  async function save() {
+    if (!f.boulderConsumedMT) return alert("Boulder consumed required.");
+    if (!f.outputs.every(o => o.gradeId && o.quantityMT)) return alert("Fill all output rows.");
+    try {
+      const payloadOutputs = f.outputs.map(o => {
+        const g = grades.find(gx => String(gx.id) === String(o.gradeId));
+        return { gradeId: +o.gradeId, quantityMT: +o.quantityMT, gradeName: g?.name, gradeCode: g?.code };
+      });
+      const res = await db.saveProductionEntry({ ...f, totalOutputMT: totalOut, yieldPct: yieldPct ? +yieldPct : null }, payloadOutputs);
+      setLots(ls => [res.lot, ...ls]);
+      setProductionEntries(es => [res.entry, ...es]);
+      setOpen(false); setF(blank);
+    } catch (err) { alert(err.message); }
+  }
+
+  return (
+    <div>
+      <div className="filter-bar"><button className="btn btn-primary" onClick={() => setOpen(true)}>+ New Production Entry</button></div>
+      <div className="table-wrap">
+        <table>
+          <thead><tr><th>Entry #</th><th>Lot #</th><th>Date</th><th>Shift</th><th>Operator</th><th className="r">Consumed</th><th className="r">Produced</th><th>Yield</th></tr></thead>
+          <tbody>
+            {productionEntries.length === 0 ? (
+              <tr><td colSpan={8} style={{ textAlign:"center", color:"var(--text3)", padding:24 }}>No production recorded yet</td></tr>
+            ) : (
+              productionEntries.map(pe => (
+                <tr key={pe.id}>
+                  <td className="mono" style={{ color:"var(--accent)" }}>{pe.entryNo}</td>
+                  <td><span className="lot-chip">🏷 {pe.lotNo}</span></td>
+                  <td className="mono" style={{ fontSize:11, color:"var(--text3)" }}>{pe.date}</td>
+                  <td><BadgeComponent type="muted">{(pe.shift || "").split(" ")[0]}</BadgeComponent></td>
+                  <td>{pe.operator}</td>
+                  <td className="r mono">{fmtMT(pe.boulderConsumedMT)}</td>
+                  <td className="r mono" style={{ color:"var(--teal)", fontWeight:700 }}>{fmtMT(pe.totalOutputMT)}</td>
+                  <td>{pe.yieldPct ? <BadgeComponent type={pe.yieldPct >= 90 ? "green" : "amber"}>{pe.yieldPct}%</BadgeComponent> : "—"}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {open && (
+        <Modal title="New Milling Run / Production Entry" onClose={() => setOpen(false)} foot={<><button className="btn btn-ghost" onClick={() => setOpen(false)}>Cancel</button><button className="btn btn-primary" onClick={save}>Save Entry</button></>}>
+          <div className="form-row cols-3"><FG label="Date"><input type="date" value={f.date} onChange={e => set("date")(e.target.value)} /></FG><FG label="Shift"><select value={f.shift} onChange={e => set("shift")(e.target.value)}>{SHIFTS.map(s => <option key={s}>{s}</option>)}</select></FG><FG label="Operator"><select value={f.operator} onChange={e => set("operator")(e.target.value)}>{OPERATORS.map(o => <option key={o}>{o}</option>)}</select></FG></div>
+          <div className="form-row cols-2"><FG label="Boulder Consumed (MT) *"><input type="number" step="0.001" value={f.boulderConsumedMT} onChange={e => set("boulderConsumedMT")(e.target.value)} /></FG><FG label="Machine Running Hours"><input type="number" value={f.machineHours} onChange={e => set("machineHours")(e.target.value)} /></FG></div>
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ display:"flex", justifyContent:"space-between", marginBottom: 8 }}><label style={{ fontSize:11, color:"var(--text2)", textTransform:"uppercase", fontFamily:"var(--mono)" }}>Produced Outputs by Grade</label><button className="btn btn-ghost btn-sm" onClick={() => setF(x => ({ ...x, outputs:[...x.outputs, blankOut()] }))}>+ Add Grade Row</button></div>
+            <div className="output-rows">
+              {f.outputs.map((row, i) => (
+                <div key={i} className="output-row">
+                  <div className="form-group"><select value={row.gradeId} onChange={e => setOut(i, "gradeId", e.target.value)}>{finished.map(g => <option key={g.id} value={g.id}>[{g.code}] {g.name}</option>)}</select></div>
+                  <div className="form-group"><input type="number" step="0.001" placeholder="Quantity (MT)" value={row.quantityMT} onChange={e => setOut(i, "quantityMT", e.target.value)} /></div>
+                  <button className="btn btn-danger btn-sm" onClick={() => setF(x => ({ ...x, outputs: x.outputs.filter((_, idx) => idx !== i) }))}>✕</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function ShiftLogView({ grades, shiftLogs, setShiftLogs }) {
+  const [open, setOpen] = useState(false);
+  const blank = { date:today(), shift:SHIFTS[0], operator:OPERATORS[0], machineStatus:"Running", boulderFed:"", production:[{ gradeId:grades[0]?.id||"", quantity:"" }], breakdowns:"", remarks:"" };
+  const [f, setF] = useState(blank);
+  const set = k => v => setF(x => ({ ...x, [k]: v }));
+
+  async function save() {
+    if (!f.boulderFed) return alert("Boulder fed is required.");
+    try {
+      const enriched = f.production.map(p => {
+        const g = grades.find(gx => String(gx.id) === String(p.gradeId));
+        return { gradeId: +p.gradeId, quantity: +p.quantity, gradeCode: g?.code, gradeName: g?.name };
+      });
+      const row = await db.saveShiftLog(f, enriched);
+      setShiftLogs(ls => [row, ...ls]);
+      setOpen(false); setF(blank);
+    } catch (err) { alert(err.message); }
+  }
+
+  return (
+    <div>
+      <div className="filter-bar"><button className="btn btn-primary" onClick={() => setOpen(true)}>+ New Shift Log</button></div>
+      <div className="table-wrap">
+        <table>
+          <thead><tr><th>Log #</th><th>Date</th><th>Shift</th><th>Operator</th><th>Status</th><th className="r">Fed (MT)</th><th>Breakdowns</th></tr></thead>
+          <tbody>
+            {shiftLogs.length === 0 ? (
+              <tr><td colSpan={7} style={{ textAlign:"center", color:"var(--text3)", padding:24 }}>No shift logs recorded yet</td></tr>
+            ) : (
+              shiftLogs.map(l => (
+                <tr key={l.id}>
+                  <td className="mono" style={{ color:"var(--accent)" }}>{l.logNo}</td>
+                  <td className="mono" style={{ fontSize:11, color:"var(--text3)" }}>{l.date}</td>
+                  <td><BadgeComponent type="muted">{(l.shift || "").split(" ")[0]}</BadgeComponent></td>
+                  <td>{l.operator}</td>
+                  <td><BadgeComponent type={l.machineStatus === "Running" ? "green" : "red"}>{l.machineStatus}</BadgeComponent></td>
+                  <td className="r mono">{l.boulderFed}</td>
+                  <td style={{ fontSize:12 }}>{l.breakdowns || "None"}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {open && (
+        <Modal title="Record Shift Operating Log" onClose={() => setOpen(false)} foot={<><button className="btn btn-ghost" onClick={() => setOpen(false)}>Cancel</button><button className="btn btn-primary" onClick={save}>Save Log</button></>}>
+          <div className="form-row cols-2"><FG label="Date"><input type="date" value={f.date} onChange={e => set("date")(e.target.value)} /></FG><FG label="Shift"><select value={f.shift} onChange={e => set("shift")(e.target.value)}>{SHIFTS.map(s => <option key={s}>{s}</option>)}</select></FG></div>
+          <div className="form-row cols-2"><FG label="Operator"><select value={f.operator} onChange={e => set("operator")(e.target.value)}>{OPERATORS.map(o => <option key={o}>{o}</option>)}</select></FG><FG label="Boulder Fed (MT) *"><input type="number" value={f.boulderFed} onChange={e => set("boulderFed")(e.target.value)} /></FG></div>
+          <div className="form-row"><FG label="Breakdowns / Downtime"><input placeholder="e.g. 30 min classifier mesh choke" value={f.breakdowns} onChange={e => set("breakdowns")(e.target.value)} /></FG></div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function StockLedgerView({ grades, boulderReceipts, productionEntries, weighments }) {
+  const stock = useMemo(() => computeStock(grades, boulderReceipts, productionEntries, weighments), [grades, boulderReceipts, productionEntries, weighments]);
+  return (
+    <div className="table-wrap">
+      <div className="table-toolbar"><h3>Material Inventory Balance (Real-Time Calculation)</h3></div>
+      <table>
+        <thead><tr><th>Grade</th><th>Type</th><th className="r">Total Inflow / Produced</th><th className="r">Total Outflow / Sold</th><th className="r">Closing Stock Balance</th><th>Status</th></tr></thead>
+        <tbody>
+          {Object.values(stock).map(s => (
+            <tr key={s.gradeId}>
+              <td><BadgeComponent type={s.isBoulder ? "teal" : "muted"}>{s.code}</BadgeComponent> {s.name}</td>
+              <td><BadgeComponent type={s.isBoulder ? "teal" : "blue"}>{s.isBoulder ? "Raw Material" : "Finished Product"}</BadgeComponent></td>
+              <td className="r mono" style={{ color:"var(--teal)" }}>{fmtMT(s.isBoulder ? s.in : s.produced)}</td>
+              <td className="r mono" style={{ color:"var(--amber)" }}>{fmtMT(s.isBoulder ? Math.abs(s.produced) : s.sold)}</td>
+              <td className="r mono" style={{ fontWeight:700, color: s.closing < 0 ? "var(--red)" : "var(--accent)" }}>{fmtMT(s.closing)}</td>
+              <td><BadgeComponent type={s.closing < 0 ? "red" : s.closing < 10 ? "amber" : "green"}>{s.closing < 0 ? "Negative" : s.closing < 10 ? "Low" : "Optimal"}</BadgeComponent></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ── COMMERCIAL & REPORTING VIEWS ──────────────────────────────────────────────
+
+function PurchasesView({ suppliers, purchases, setPurchases }) {
+  const [open, setOpen] = useState(false);
+  const blank = { date:today(), supplierId:"", description:"", quantityMT:"", ratePerMT:"", gstPct:"5", invoiceNo:"", remarks:"" };
+  const [f, setF] = useState(blank);
+  const set = k => v => setF(x => ({ ...x, [k]: v }));
+
+  async function save() {
+    if (!f.supplierId || !f.quantityMT || !f.ratePerMT) return alert("Supplier, Quantity, and Rate required.");
+    try {
+      const row = await db.savePurchase(f);
+      setPurchases(ps => [row, ...ps]);
+      setOpen(false); setF(blank);
+    } catch (err) { alert(err.message); }
+  }
+
+  return (
+    <div>
+      <div className="filter-bar"><button className="btn btn-primary" onClick={() => setOpen(true)}>+ New RM Purchase Order</button></div>
+      <div className="table-wrap">
+        <table>
+          <thead><tr><th>PO #</th><th>Date</th><th>Supplier</th><th className="r">Qty (MT)</th><th className="r">Rate</th><th className="r">Taxable</th><th className="r">Total</th></tr></thead>
+          <tbody>
+            {purchases.map(p => (
+              <tr key={p.id}>
+                <td className="mono" style={{ color:"var(--accent)" }}>{p.poNo}</td>
+                <td className="mono">{p.date}</td><td>{p.supplierName}</td>
+                <td className="r mono">{fmtMT(p.quantityMT)}</td><td className="r mono">₹{p.ratePerMT}</td>
+                <td className="r mono">₹{p.taxableAmount.toLocaleString()}</td>
+                <td className="r mono" style={{ fontWeight:700, color:"var(--amber)" }}>₹{p.totalAmount.toLocaleString()}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {open && (
+        <Modal title="Record Raw Material Purchase" onClose={() => setOpen(false)} foot={<><button className="btn btn-ghost" onClick={() => setOpen(false)}>Cancel</button><button className="btn btn-primary" onClick={save}>Save Purchase</button></>}>
+          <div className="form-row cols-2"><FG label="Date"><input type="date" value={f.date} onChange={e => set("date")(e.target.value)} /></FG><FG label="Supplier"><select value={f.supplierId} onChange={e => set("supplierId")(e.target.value)}><option value="">Select...</option>{suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></FG></div>
+          <div className="form-row cols-3"><FG label="Quantity (MT)"><input type="number" step="0.001" value={f.quantityMT} onChange={e => set("quantityMT")(e.target.value)} /></FG><FG label="Rate / MT (₹)"><input type="number" value={f.ratePerMT} onChange={e => set("ratePerMT")(e.target.value)} /></FG><FG label="GST %"><select value={f.gstPct} onChange={e => set("gstPct")(e.target.value)}>{[0,5,12,18].map(r => <option key={r} value={r}>{r}%</option>)}</select></FG></div>
+          <div className="form-row"><FG label="Invoice #"><input value={f.invoiceNo} onChange={e => set("invoiceNo")(e.target.value)} /></FG></div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function MonthlyOpsCostsView({ expenses, setExpenses }) {
+  const [ym, setYm] = useState(today().slice(0, 7));
+  const [vals, setVals] = useState({});
+  useEffect(() => {
+    const next = {};
+    OPS_CATS.forEach(c => {
+      const ex = expenses.filter(e => e.opsAuto && e.category === c && e.date?.slice(0, 7) === ym);
+      next[c] = ex.length ? String(ex.reduce((s, e) => s + e.amount, 0)) : "";
+    });
+    setVals(next);
+  }, [ym, expenses]);
+
+  async function save() {
+    try {
+      const updated = await db.saveMonthlyOpsCosts(ym, vals);
+      setExpenses(es => [...es.filter(e => !(e.opsAuto && e.date?.slice(0,7) === ym)), ...updated]);
+      alert("Monthly overheads synchronized!");
+    } catch (err) { alert(err.message); }
+  }
+
+  return (
+    <div className="config-card">
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
+        <h3>Monthly Operations Quick Entry</h3>
+        <FG label="Month Filter"><input type="month" value={ym} onChange={e => setYm(e.target.value)} style={{ padding:4 }} /></FG>
+      </div>
+      <div className="config-row">
+        {OPS_CATS.map(c => (
+          <FG key={c} label={`${c.toUpperCase()} (₹)`}>
+            <input type="number" value={vals[c] || ""} onChange={e => setVals({ ...vals, [c]: e.target.value })} />
+          </FG>
+        ))}
+      </div>
+      <button className="btn btn-primary" style={{ marginTop: 14 }} onClick={save}>Sync Overheads to Ledger</button>
+    </div>
+  );
+}
+
+function ExpensesView({ expenses, setExpenses }) {
+  const [open, setOpen] = useState(false);
+  const blank = { date:today(), category:"fuel", amount:"", description:"", paidTo:"", reference:"", paymentMode:"bank" };
+  const [f, setF] = useState(blank);
+  const set = k => v => setF(x => ({ ...x, [k]: v }));
+
+  async function save() {
+    if (!f.amount || !f.description) return alert("Amount and description required.");
+    try {
+      const row = await db.saveExpense(f);
+      setExpenses(es => [row, ...es]);
+      setOpen(false); setF(blank);
+    } catch (err) { alert(err.message); }
+  }
+
+  return (
+    <div>
+      <div className="filter-bar"><button className="btn btn-primary" onClick={() => setOpen(true)}>+ Add Expense Entry</button></div>
+      <div className="table-wrap">
+        <table>
+          <thead><tr><th>Exp #</th><th>Date</th><th>Category</th><th>Description</th><th>Paid To</th><th>Channel</th><th className="r">Amount</th></tr></thead>
+          <tbody>
+            {expenses.map(e => (
+              <tr key={e.id}>
+                <td className="mono" style={{ color:"var(--accent)" }}>{e.expNo}</td>
+                <td className="mono">{e.date}</td><td><BadgeComponent type="muted">{e.category}</BadgeComponent></td>
+                <td>{e.description}</td><td>{e.paidTo || "—"}</td>
+                <td><BadgeComponent type={e.paymentMode === "cash" ? "amber" : "muted"}>{e.paymentMode}</BadgeComponent></td>
+                <td className="r mono" style={{ color:"var(--red)", fontWeight: 700 }}>₹{e.amount.toLocaleString()}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {open && (
+        <Modal title="Record Direct Expense" onClose={() => setOpen(false)} foot={<><button className="btn btn-ghost" onClick={() => setOpen(false)}>Cancel</button><button className="btn btn-primary" onClick={save}>Save Expense</button></>}>
+          <div className="form-row cols-2"><FG label="Date"><input type="date" value={f.date} onChange={e => set("date")(e.target.value)} /></FG><FG label="Category"><select value={f.category} onChange={e => set("category")(e.target.value)}>{EXP_CATS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</select></FG></div>
+          <div className="form-row cols-2"><FG label="Amount (₹)"><input type="number" value={f.amount} onChange={e => set("amount")(e.target.value)} /></FG><FG label="Channel"><select value={f.paymentMode} onChange={e => set("paymentMode")(e.target.value)}><option value="bank">Bank / UPI</option><option value="cash">Site Petty Cash</option></select></FG></div>
+          <div className="form-row"><FG label="Description"><input value={f.description} onChange={e => set("description")(e.target.value)} /></FG></div>
+          <div className="form-row cols-2"><FG label="Paid To"><input value={f.paidTo} onChange={e => set("paidTo")(e.target.value)} /></FG><FG label="Bill / Voucher Ref"><input value={f.reference} onChange={e => set("reference")(e.target.value)} /></FG></div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function CapitalRegisterView({ capitalItems, setCapitalItems }) {
+  const [open, setOpen] = useState(false);
+  const blank = { date:today(), category:"land", description:"", amount:"", paidTo:"", reference:"", fundedBy:"own", paymentMode:"cash", paidByPartner:"" };
+  const [f, setF] = useState(blank);
+  const set = k => v => setF(x => ({ ...x, [k]: v }));
+
+  async function save() {
+    if (!f.amount || !f.description) return alert("Amount and description required.");
+    try {
+      const row = await db.saveCapitalItem(f);
+      setCapitalItems(cs => [row, ...cs]);
+      setOpen(false); setF(blank);
+    } catch (err) { alert(err.message); }
+  }
+
+  return (
+    <div>
+      <div className="filter-bar"><button className="btn btn-primary" onClick={() => setOpen(true)}>+ Add Fixed Asset (Land, Cash Capex, Plant)</button></div>
+      <div className="table-wrap">
+        <table>
+          <thead><tr><th>Cap #</th><th>Date</th><th>Category</th><th>Description</th><th>Channel</th><th>Funded By</th><th className="r">Amount</th></tr></thead>
+          <tbody>
+            {capitalItems.map(c => (
+              <tr key={c.id}>
+                <td className="mono" style={{ color:"var(--accent)" }}>{c.capNo}</td>
+                <td className="mono">{c.date}</td>
+                <td><BadgeComponent type="muted">{c.category}</BadgeComponent></td>
+                <td style={{ fontWeight: 500 }}>{c.description}</td>
+                <td><BadgeComponent type={c.paymentMode === "cash" ? "amber" : "muted"}>{c.paymentMode}</BadgeComponent></td>
+                <td><BadgeComponent type={c.fundedBy === "loan" ? "amber" : "green"}>{c.fundedBy}</BadgeComponent></td>
+                <td className="r mono" style={{ color:"var(--accent)", fontWeight: 700 }}>₹{c.amount.toLocaleString()}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {open && (
+        <Modal title="Record Capital / Land / Plant Asset" onClose={() => setOpen(false)} foot={<><button className="btn btn-ghost" onClick={() => setOpen(false)}>Cancel</button><button className="btn btn-primary" onClick={save}>Save Asset</button></>}>
+          <div className="form-row cols-2"><FG label="Acquisition Date"><input type="date" value={f.date} onChange={e => set("date")(e.target.value)} /></FG><FG label="Asset Category"><select value={f.category} onChange={e => set("category")(e.target.value)}>{CAP_CATS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</select></FG></div>
+          <div className="form-row cols-2"><FG label="Total Cost / Value (₹)"><input type="number" value={f.amount} onChange={e => set("amount")(e.target.value)} /></FG><FG label="Payment Method"><select value={f.paymentMode} onChange={e => set("paymentMode")(e.target.value)}><option value="cash">Direct Cash / Off-Book</option><option value="bank">Company Bank Account</option><option value="partner_personal">Partner Personal Account</option></select></FG></div>
+          <div className="form-row cols-2"><FG label="Financing Source"><select value={f.fundedBy} onChange={e => set("fundedBy")(e.target.value)}><option value="own">Partner Equity</option><option value="loan">Bank / Equipment Loan</option></select></FG><FG label="Paid By Partner (Optional)"><input placeholder="Partner Name" value={f.paidByPartner} onChange={e => set("paidByPartner")(e.target.value)} /></FG></div>
+          <div className="form-row"><FG label="Asset Description"><input placeholder="e.g. Land Plot Registry (Peddapur) or Machinery Advance" value={f.description} onChange={e => set("description")(e.target.value)} /></FG></div>
+          <div className="form-row cols-2"><FG label="Paid To"><input value={f.paidTo} onChange={e => set("paidTo")(e.target.value)} /></FG><FG label="Registry / Deed / Invoice Ref"><input value={f.reference} onChange={e => set("reference")(e.target.value)} /></FG></div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// ── 6. BANK STATEMENT GROUPING VIEW (RESTORED CLEAN CARDS) ───────────────────
 function BankStatementGroupingView({ bankBatches, setBankBatches, bankTxns, setBankTxns, bankLabels, setBankLabels, setCapitalItems, setExpenses, setPartnerCashbook }) {
   const [sheet, setSheet] = useState(null);
   const [map, setMap] = useState({ dateCol:"", descCol:"", mode:"separate", debitCol:"", creditCol:"", amountCol:"" });
@@ -562,7 +1021,6 @@ function BankStatementGroupingView({ bankBatches, setBankBatches, bankTxns, setB
     } catch (err) { alert(err.message); }
   }
 
-  // Counterparty Grouping Engine
   const groups = useMemo(() => {
     const m = {};
     bankTxns.forEach(t => {
@@ -576,7 +1034,6 @@ function BankStatementGroupingView({ bankBatches, setBankBatches, bankTxns, setB
     }));
   }, [bankTxns, bankLabels]);
 
-  // Merge counterparties sharing the same typed name
   const mergedGroups = useMemo(() => {
     const m = {};
     groups.forEach(g => {
@@ -599,7 +1056,6 @@ function BankStatementGroupingView({ bankBatches, setBankBatches, bankTxns, setB
 
   const totalPaid = bankTxns.reduce((s, t) => s + t.debit, 0);
   const totalRecv = bankTxns.reduce((s, t) => s + t.credit, 0);
-  const namedCount = mergedGroups.filter(g => g.label).length;
 
   return (
     <div>
@@ -634,7 +1090,7 @@ function BankStatementGroupingView({ bankBatches, setBankBatches, bankTxns, setB
         <StatCard label="Total Transactions" value={bankTxns.length} sub={`${bankBatches.length} file(s)`} color="blue" />
         <StatCard label="Total Paid Out" value={fmt(totalPaid)} sub="debits" color="red" />
         <StatCard label="Total Received" value={fmt(totalRecv)} sub="credits" color="green" />
-        <StatCard label="Groups Named" value={`${namedCount} / ${mergedGroups.length}`} sub="counterparties" color="purple" />
+        <StatCard label="Counterparty Groups" value={mergedGroups.length} sub="distinct names" color="purple" />
       </div>
 
       {bankTxns.length > 0 && (
@@ -723,7 +1179,7 @@ function BankStatementGroupingView({ bankBatches, setBankBatches, bankTxns, setB
   );
 }
 
-// ── 2. PARTNER CASHBOOK & CURRENT ACCOUNT ─────────────────────────────────────
+// ── 7. PARTNER CASHBOOK ───────────────────────────────────────────────────────
 function PartnerCashbookView({ partnerCashbook, setPartnerCashbook, bankLabels, setExpenses, setCapitalItems }) {
   const [activeTab, setActiveTab] = useState("all");
   const [partnerFilter, setPartnerFilter] = useState("All");
@@ -731,27 +1187,33 @@ function PartnerCashbookView({ partnerCashbook, setPartnerCashbook, bankLabels, 
 
   const partners = useMemo(() => {
     const s = new Set();
-    Object.values(bankLabels).forEach(l => { if (l.type === "owner" && l.label) s.add(l.label); });
-    partnerCashbook.forEach(e => s.add(e.partnerName));
+    Object.values(bankLabels || {}).forEach(l => { if (l.type === "owner" && l.label) s.add(l.label); });
+    (partnerCashbook || []).forEach(e => { if (e.partnerName) s.add(e.partnerName); });
     return ["All", ...Array.from(s)];
   }, [bankLabels, partnerCashbook]);
 
   const [cf, setCf] = useState({
-    partnerName: partners[1] || "", date: today(), amount: "",
+    partnerName: "", date: today(), amount: "",
     isCapex: false, category: "misc", description: "", ref: "",
   });
 
+  useEffect(() => {
+    if (!cf.partnerName && partners.length > 1) {
+      setCf(prev => ({ ...prev, partnerName: partners[1] }));
+    }
+  }, [partners]);
+
   const filtered = useMemo(() => {
-    return partnerCashbook.filter(e => {
+    return (partnerCashbook || []).filter(e => {
       const matchPartner = partnerFilter === "All" || e.partnerName === partnerFilter;
       const matchTab = activeTab === "all" || e.accountType === activeTab;
       return matchPartner && matchTab;
     });
   }, [partnerCashbook, partnerFilter, activeTab]);
 
-  const capitalInfusions = partnerCashbook.filter(e => e.accountType === "capital" && (partnerFilter === "All" || e.partnerName === partnerFilter)).reduce((s, e) => s + e.amount, 0);
-  const currentDrawings = partnerCashbook.filter(e => e.type === "Drawings" && (partnerFilter === "All" || e.partnerName === partnerFilter)).reduce((s, e) => s + e.amount, 0);
-  const currentCredits = partnerCashbook.filter(e => (e.type === "Direct Cash Expense" || e.type === "Expense Reimbursement") && (partnerFilter === "All" || e.partnerName === partnerFilter)).reduce((s, e) => s + e.amount, 0);
+  const capitalInfusions = (partnerCashbook || []).filter(e => e.accountType === "capital" && (partnerFilter === "All" || e.partnerName === partnerFilter)).reduce((s, e) => s + (e.amount || 0), 0);
+  const currentDrawings = (partnerCashbook || []).filter(e => e.type === "Drawings" && (partnerFilter === "All" || e.partnerName === partnerFilter)).reduce((s, e) => s + (e.amount || 0), 0);
+  const currentCredits = (partnerCashbook || []).filter(e => (e.type === "Direct Cash Expense" || e.type === "Expense Reimbursement") && (partnerFilter === "All" || e.partnerName === partnerFilter)).reduce((s, e) => s + (e.amount || 0), 0);
 
   async function handleDirectCashSubmit() {
     if (!cf.partnerName || !cf.amount || !cf.description) return alert("Partner, Amount, and Description required.");
@@ -796,19 +1258,23 @@ function PartnerCashbookView({ partnerCashbook, setPartnerCashbook, bankLabels, 
         <table>
           <thead><tr><th>Date</th><th>Partner</th><th>Account</th><th>Movement Type</th><th>Narration</th><th>Channel</th><th className="r">Amount</th></tr></thead>
           <tbody>
-            {filtered.map(e => (
-              <tr key={e.id}>
-                <td className="mono">{e.entryDate}</td>
-                <td style={{ fontWeight:600 }}>{e.partnerName}</td>
-                <td><BadgeComponent type={e.accountType === "capital" ? "accent" : "muted"}>{e.accountType}</BadgeComponent></td>
-                <td><BadgeComponent type={e.type === "Capital Infusion" || e.type === "Direct Cash Expense" ? "green" : "red"}>{e.type}</BadgeComponent></td>
-                <td style={{ fontSize:12 }}>{e.remarks}</td>
-                <td><BadgeComponent type="muted">{e.paymentMode}</BadgeComponent></td>
-                <td className="r mono" style={{ fontWeight:700, color: e.type === "Drawings" ? "var(--red)" : "var(--green)" }}>
-                  {e.type === "Drawings" ? "-" : "+"}{fmt(e.amount)}
-                </td>
-              </tr>
-            ))}
+            {filtered.length === 0 ? (
+              <tr><td colSpan={7} style={{ textAlign:"center", color:"var(--text3)", padding:24 }}><EmptyState icon="📖" message="No cashbook transactions found for this view" /></td></tr>
+            ) : (
+              filtered.map(e => (
+                <tr key={e.id}>
+                  <td className="mono">{e.entryDate}</td>
+                  <td style={{ fontWeight:600 }}>{e.partnerName}</td>
+                  <td><BadgeComponent type={e.accountType === "capital" ? "accent" : "muted"}>{e.accountType}</BadgeComponent></td>
+                  <td><BadgeComponent type={e.type === "Capital Infusion" || e.type === "Direct Cash Expense" ? "green" : "red"}>{e.type}</BadgeComponent></td>
+                  <td style={{ fontSize:12 }}>{e.remarks}</td>
+                  <td><BadgeComponent type="muted">{e.paymentMode}</BadgeComponent></td>
+                  <td className="r mono" style={{ fontWeight:700, color: e.type === "Drawings" ? "var(--red)" : "var(--green)" }}>
+                    {e.type === "Drawings" ? "-" : "+"}{fmt(e.amount)}
+                  </td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>
@@ -849,23 +1315,23 @@ function PartnerCashbookView({ partnerCashbook, setPartnerCashbook, bankLabels, 
   );
 }
 
-// ── 3. BALANCE SHEET ──────────────────────────────────────────────────────────
+// ── 8. BALANCE SHEET VIEW ─────────────────────────────────────────────────────
 function BalanceSheetView({ capitalItems, bankTxns, partnerCashbook, purchases, expenses, weighments, grades, boulderReceipts, productionEntries, costConfig }) {
   const fixedAssets = useMemo(() => {
-    return capitalItems.reduce((acc, c) => {
-      acc[c.category] = (acc[c.category] || 0) + c.amount;
+    return (capitalItems || []).reduce((acc, c) => {
+      acc[c.category] = (acc[c.category] || 0) + (c.amount || 0);
       return acc;
     }, {});
   }, [capitalItems]);
   const totalFixedAssets = Object.values(fixedAssets).reduce((s, a) => s + a, 0);
 
   const bankBalance = useMemo(() => {
-    return bankTxns.reduce((s, t) => s + (t.credit - t.debit), 0);
+    return (bankTxns || []).reduce((s, t) => s + ((t.credit || 0) - (t.debit || 0)), 0);
   }, [bankTxns]);
 
   const stock = useMemo(() => computeStock(grades, boulderReceipts, productionEntries, weighments), [grades, boulderReceipts, productionEntries, weighments]);
-  const totalRMReceivedMT = boulderReceipts.reduce((s, r) => s + r.quantityMT, 0);
-  const totalRMCost = purchases.reduce((s, p) => s + p.taxableAmount, 0);
+  const totalRMReceivedMT = (boulderReceipts || []).reduce((s, r) => s + (r.quantityMT || 0), 0);
+  const totalRMCost = (purchases || []).reduce((s, p) => s + (p.taxableAmount || 0), 0);
   const avgBoulderRate = totalRMReceivedMT > 0 ? (totalRMCost / totalRMReceivedMT) : 1200;
 
   const boulderClosingMT = Object.values(stock).find(s => s.isBoulder)?.closing || 0;
@@ -875,30 +1341,30 @@ function BalanceSheetView({ capitalItems, bankTxns, partnerCashbook, purchases, 
     const cptVal = +costConfig.stdSellingRate || 1800;
     return Object.values(stock)
       .filter(s => !s.isBoulder)
-      .reduce((s, g) => s + Math.max(0, g.closing * cptVal), 0);
+      .reduce((s, g) => s + Math.max(0, (g.closing || 0) * cptVal), 0);
   }, [stock, costConfig]);
 
   const totalCurrentAssets = (bankBalance > 0 ? bankBalance : 0) + rawMaterialValuation + finishedGoodsValuation;
   const totalAssets = totalFixedAssets + totalCurrentAssets;
 
   const loanCapital = useMemo(() => {
-    return capitalItems.filter(c => c.fundedBy === "loan").reduce((s, c) => s + c.amount, 0);
+    return (capitalItems || []).filter(c => c.fundedBy === "loan").reduce((s, c) => s + (c.amount || 0), 0);
   }, [capitalItems]);
   const bankOverdraft = bankBalance < 0 ? Math.abs(bankBalance) : 0;
   const totalLiabilities = loanCapital + bankOverdraft;
 
   const partnerEquity = useMemo(() => {
     const raw = {};
-    partnerCashbook.forEach(e => {
-      const delta = (e.type === "Capital Infusion" || e.type === "Direct Cash Expense" || e.type === "Expense Reimbursement") ? e.amount : -e.amount;
+    (partnerCashbook || []).forEach(e => {
+      const delta = (e.type === "Capital Infusion" || e.type === "Direct Cash Expense" || e.type === "Expense Reimbursement") ? (e.amount || 0) : -(e.amount || 0);
       raw[e.partnerName] = (raw[e.partnerName] || 0) + delta;
     });
     return raw;
   }, [partnerCashbook]);
   const totalPartnerEquity = Object.values(partnerEquity).reduce((s, a) => s + a, 0);
 
-  const totalRevenue = weighments.filter(w => w.purpose === "Sale").reduce((s, w) => s + (w.netWeight / 1000) * (+costConfig.stdSellingRate || 1800), 0);
-  const totalSpend = purchases.reduce((s, p) => s + p.taxableAmount, 0) + expenses.reduce((s, e) => s + e.amount, 0);
+  const totalRevenue = (weighments || []).filter(w => w.purpose === "Sale").reduce((s, w) => s + ((w.netWeight || 0) / 1000) * (+costConfig.stdSellingRate || 1800), 0);
+  const totalSpend = (purchases || []).reduce((s, p) => s + (p.taxableAmount || 0), 0) + (expenses || []).reduce((s, e) => s + (e.amount || 0), 0);
   const retainedEarnings = totalRevenue - totalSpend;
   const totalFinanced = totalLiabilities + totalPartnerEquity + retainedEarnings;
 
@@ -906,9 +1372,9 @@ function BalanceSheetView({ capitalItems, bankTxns, partnerCashbook, purchases, 
     <div>
       <div className="stats-grid">
         <StatCard label="Gross Fixed Assets" value={fmt(totalFixedAssets)} color="teal" sub="Land, Civil, Plant" />
-        <StatCard label="Current Assets (Yard + Bank)" value={fmt(totalCurrentAssets)} color="blue" sub="Stock & Cash" />
-        <StatCard label="Total Liabilities (Debt)" value={fmt(totalLiabilities)} color="red" sub="Loans & Overdraft" />
-        <StatCard label="Net Partner Net Worth" value={fmt(totalPartnerEquity + retainedEarnings)} color="accent" sub="Capital + Retained P&L" />
+        <StatCard label="Current Assets" value={fmt(totalCurrentAssets)} color="blue" sub="Yard Stock & Cash" />
+        <StatCard label="Total Liabilities" value={fmt(totalLiabilities)} color="red" sub="Loans & Overdraft" />
+        <StatCard label="Partner Net Worth" value={fmt(totalPartnerEquity + retainedEarnings)} color="accent" sub="Capital + Retained P&L" />
       </div>
 
       <div className="two-col">
@@ -976,239 +1442,50 @@ function BalanceSheetView({ capitalItems, bankTxns, partnerCashbook, purchases, 
   );
 }
 
-// ── 4. CAPITAL REGISTER ───────────────────────────────────────────────────────
-function CapitalRegisterView({ capitalItems, setCapitalItems }) {
-  const [open, setOpen] = useState(false);
-  const blank = { date:today(), category:"land", description:"", amount:"", paidTo:"", reference:"", fundedBy:"own", paymentMode:"cash", paidByPartner:"" };
-  const [f, setF] = useState(blank);
-  const set = k => v => setF(x => ({ ...x, [k]: v }));
-
-  async function save() {
-    if (!f.amount || !f.description) return alert("Amount and description required");
-    try {
-      const row = await db.saveCapitalItem(f);
-      setCapitalItems(cs => [row, ...cs]);
-      setOpen(false); setF(blank);
-    } catch (err) { alert(err.message); }
-  }
-
-  return (
-    <div>
-      <div className="filter-bar"><button className="btn btn-primary" onClick={() => setOpen(true)}>+ Add Fixed Asset (Land, Cash Capex, Plant)</button></div>
-      <div className="table-wrap">
-        <table>
-          <thead><tr><th>Cap #</th><th>Date</th><th>Category</th><th>Description</th><th>Channel</th><th>Funded By</th><th className="r">Amount</th></tr></thead>
-          <tbody>
-            {capitalItems.map(c => (
-              <tr key={c.id}>
-                <td className="mono" style={{ color:"var(--accent)" }}>{c.capNo}</td>
-                <td className="mono">{c.date}</td>
-                <td><BadgeComponent type="muted">{c.category}</BadgeComponent></td>
-                <td style={{ fontWeight: 500 }}>{c.description}</td>
-                <td><BadgeComponent type={c.paymentMode === "cash" ? "amber" : "muted"}>{c.paymentMode}</BadgeComponent></td>
-                <td><BadgeComponent type={c.fundedBy === "loan" ? "amber" : "green"}>{c.fundedBy}</BadgeComponent></td>
-                <td className="r mono" style={{ color:"var(--accent)", fontWeight: 700 }}>₹{c.amount.toLocaleString()}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {open && (
-        <Modal title="Record Capital / Land / Plant Asset" onClose={() => setOpen(false)} foot={<><button className="btn btn-ghost" onClick={() => setOpen(false)}>Cancel</button><button className="btn btn-primary" onClick={save}>Save Asset</button></>}>
-          <div className="form-row cols-2"><FG label="Acquisition Date"><input type="date" value={f.date} onChange={e => set("date")(e.target.value)} /></FG><FG label="Asset Category"><select value={f.category} onChange={e => set("category")(e.target.value)}>{CAP_CATS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</select></FG></div>
-          <div className="form-row cols-2"><FG label="Total Cost (₹)"><input type="number" value={f.amount} onChange={e => set("amount")(e.target.value)} /></FG><FG label="Payment Method"><select value={f.paymentMode} onChange={e => set("paymentMode")(e.target.value)}><option value="cash">Direct Cash / Off-Book</option><option value="bank">Company Bank Account</option><option value="partner_personal">Partner Personal Account</option></select></FG></div>
-          <div className="form-row cols-2"><FG label="Financing Source"><select value={f.fundedBy} onChange={e => set("fundedBy")(e.target.value)}><option value="own">Partner Equity</option><option value="loan">Bank / Equipment Loan</option></select></FG><FG label="Paid By Partner (Optional)"><input placeholder="Partner Name" value={f.paidByPartner} onChange={e => set("paidByPartner")(e.target.value)} /></FG></div>
-          <div className="form-row"><FG label="Asset Description"><input placeholder="e.g. Land Plot Registry (Peddapur) or Machinery Advance" value={f.description} onChange={e => set("description")(e.target.value)} /></FG></div>
-          <div className="form-row cols-2"><FG label="Paid To"><input value={f.paidTo} onChange={e => set("paidTo")(e.target.value)} /></FG><FG label="Registry / Deed / Ref #"><input value={f.reference} onChange={e => set("reference")(e.target.value)} /></FG></div>
-        </Modal>
-      )}
-    </div>
-  );
-}
-
-// ── 5. COMMERCIAL & OPERATIONS VIEWS ──────────────────────────────────────────
-function ExpensesView({ expenses }) {
-  return (
-    <div className="table-wrap">
-      <table>
-        <thead><tr><th>Exp #</th><th>Date</th><th>Category</th><th>Description</th><th>Channel</th><th className="r">Amount</th></tr></thead>
-        <tbody>
-          {expenses.map(e => (
-            <tr key={e.id}>
-              <td className="mono" style={{ color:"var(--accent)" }}>{e.expNo}</td>
-              <td className="mono">{e.date}</td><td><BadgeComponent type="muted">{e.category}</BadgeComponent></td>
-              <td>{e.description}</td>
-              <td><BadgeComponent type={e.paymentMode === "cash" ? "amber" : "muted"}>{e.paymentMode}</BadgeComponent></td>
-              <td className="r mono" style={{ color:"var(--red)", fontWeight: 700 }}>₹{e.amount.toLocaleString()}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function MonthlyOpsCostsView({ expenses, setExpenses }) {
-  const [ym, setYm] = useState(today().slice(0, 7));
-  const [vals, setVals] = useState({});
-  useEffect(() => {
-    const next = {};
-    OPS_CATS.forEach(c => {
-      const ex = expenses.filter(e => e.opsAuto && e.category === c && e.date?.slice(0, 7) === ym);
-      next[c] = ex.length ? String(ex.reduce((s, e) => s + e.amount, 0)) : "";
-    });
-    setVals(next);
-  }, [ym, expenses]);
-
-  async function save() {
-    try {
-      const updated = await db.saveMonthlyOpsCosts(ym, vals);
-      setExpenses(es => [...es.filter(e => !(e.opsAuto && e.date?.slice(0,7) === ym)), ...updated]);
-      alert("Monthly overheads synchronized!");
-    } catch (err) { alert(err.message); }
-  }
-
-  return (
-    <div className="config-card">
-      <h3>Monthly Operations Quick Entry</h3>
-      <div className="config-row">
-        {OPS_CATS.map(c => (
-          <FG key={c} label={`${c.toUpperCase()} (₹)`}>
-            <input type="number" value={vals[c] || ""} onChange={e => setVals({ ...vals, [c]: e.target.value })} />
-          </FG>
-        ))}
-      </div>
-      <button className="btn btn-primary" style={{ marginTop: 14 }} onClick={save}>Sync Overheads to Ledger</button>
-    </div>
-  );
-}
-
-function PurchasesView({ purchases }) {
-  return (
-    <div className="table-wrap">
-      <table>
-        <thead><tr><th>PO #</th><th>Date</th><th>Supplier</th><th className="r">Qty (MT)</th><th className="r">Rate</th><th className="r">Total</th></tr></thead>
-        <tbody>
-          {purchases.map(p => (
-            <tr key={p.id}>
-              <td className="mono" style={{ color:"var(--accent)" }}>{p.poNo}</td>
-              <td className="mono">{p.date}</td><td>{p.supplierName}</td>
-              <td className="r mono">{fmtMT(p.quantityMT)}</td><td className="r mono">₹{p.ratePerMT}</td>
-              <td className="r mono" style={{ fontWeight:700, color:"var(--amber)" }}>₹{p.totalAmount.toLocaleString()}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function WeighmentsView({ weighments }) {
-  return (
-    <div className="table-wrap">
-      <table>
-        <thead><tr><th>Slip #</th><th>Date</th><th>Vehicle</th><th>Customer</th><th>Grade</th><th className="r">Net Wt</th><th>Purpose</th></tr></thead>
-        <tbody>
-          {weighments.map(w => (
-            <tr key={w.id}>
-              <td className="mono" style={{ color:"var(--accent)" }}>{w.slipNo}</td>
-              <td className="mono">{w.date}</td><td className="mono">{w.vehicleNo}</td><td>{w.customerName}</td>
-              <td><BadgeComponent type="muted">{w.gradeCode}</BadgeComponent></td>
-              <td className="r mono" style={{ color:"var(--teal)", fontWeight:700 }}>{fmtWt(w.netWeight)}</td>
-              <td><BadgeComponent type={w.purpose === "Sale" ? "green" : "blue"}>{w.purpose}</BadgeComponent></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function BoulderInView({ boulderReceipts }) {
-  return (
-    <div className="table-wrap">
-      <table>
-        <thead><tr><th>Receipt #</th><th>Date</th><th>Supplier</th><th className="r">Qty (MT)</th></tr></thead>
-        <tbody>
-          {boulderReceipts.map(r => (
-            <tr key={r.id}>
-              <td className="mono" style={{ color:"var(--accent)" }}>{r.receiptNo}</td>
-              <td className="mono">{r.date}</td><td>{r.supplierName}</td>
-              <td className="r mono" style={{ color:"var(--teal)", fontWeight:700 }}>{fmtMT(r.quantityMT)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function ProductionView({ productionEntries }) {
-  return (
-    <div className="table-wrap">
-      <table>
-        <thead><tr><th>Entry #</th><th>Lot #</th><th>Date</th><th>Shift</th><th className="r">Consumed</th><th className="r">Produced</th></tr></thead>
-        <tbody>
-          {productionEntries.map(pe => (
-            <tr key={pe.id}>
-              <td className="mono" style={{ color:"var(--accent)" }}>{pe.entryNo}</td>
-              <td><span className="lot-chip">🏷 {pe.lotNo}</span></td>
-              <td className="mono">{pe.date}</td><td>{pe.shift}</td>
-              <td className="r mono">{fmtMT(pe.boulderConsumedMT)}</td>
-              <td className="r mono" style={{ color:"var(--teal)", fontWeight:700 }}>{fmtMT(pe.totalOutputMT)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function StockLedgerView({ grades, boulderReceipts, productionEntries, weighments }) {
-  const stock = useMemo(() => computeStock(grades, boulderReceipts, productionEntries, weighments), [grades, boulderReceipts, productionEntries, weighments]);
-  return (
-    <div className="table-wrap">
-      <table>
-        <thead><tr><th>Grade</th><th className="r">Balance (MT)</th></tr></thead>
-        <tbody>
-          {Object.values(stock).map(s => (
-            <tr key={s.gradeId}>
-              <td>{s.name}</td>
-              <td className="r mono" style={{ fontWeight:700, color: s.closing < 0 ? "var(--red)" : "var(--accent)" }}>{fmtMT(s.closing)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
+// ── 9. COST SHEET & STANDARDS ─────────────────────────────────────────────────
 function CostSheetView({ purchases, expenses, productionEntries, weighments, costConfig }) {
   const ym = today().slice(0, 7);
-  const rm = purchases.filter(p => p.date?.slice(0, 7) === ym).reduce((s, p) => s + p.taxableAmount, 0);
-  const opex = expenses.filter(e => e.date?.slice(0, 7) === ym).reduce((s, e) => s + e.amount, 0);
-  const prod = productionEntries.filter(p => p.date?.slice(0, 7) === ym).reduce((s, p) => s + p.totalOutputMT, 0);
+  const rm = (purchases || []).filter(p => p.date?.slice(0, 7) === ym).reduce((s, p) => s + p.taxableAmount, 0);
+  const opex = (expenses || []).filter(e => e.date?.slice(0, 7) === ym).reduce((s, e) => s + e.amount, 0);
+  const prod = (productionEntries || []).filter(p => p.date?.slice(0, 7) === ym).reduce((s, p) => s + p.totalOutputMT, 0);
   const cpt = prod > 0 ? (rm + opex) / prod : 0;
 
   return (
     <div>
       <div className="cpt-banner">
         <div><div className="cpt-sub">Production Cost per Tonne</div><div className="cpt-val">₹{cpt.toFixed(0)}</div></div>
-        <div><div className="cpt-sub">Monthly Spend</div><div className="cpt-val" style={{ color:"var(--blue)" }}>₹{(rm + opex).toLocaleString()}</div></div>
+        <div><div className="cpt-sub">Monthly Spend ({ym})</div><div className="cpt-val" style={{ color:"var(--blue)" }}>₹{(rm + opex).toLocaleString()}</div></div>
       </div>
     </div>
   );
 }
 
 function CostConfigView({ costConfig, setCostConfig }) {
+  const [f, setF] = useState(costConfig);
+  const set = k => v => setF(x => ({ ...x, [k]: v }));
+
+  async function save() {
+    try {
+      await db.saveCostConfig(f);
+      setCostConfig(f);
+      alert("Cost configuration saved!");
+    } catch (err) { alert(err.message); }
+  }
+
   return (
     <div className="config-card">
       <h3>Cost Configuration Standards</h3>
-      <p style={{ fontSize:12, color:"var(--text3)" }}>Configure standard overhead metrics for automated P&L calculations.</p>
+      <div className="config-row" style={{ marginTop: 14 }}>
+        <FG label="Bag Cost (₹/tonne)"><input type="number" value={f.bagCostPerTonne || ""} onChange={e => set("bagCostPerTonne")(e.target.value)} /></FG>
+        <FG label="Freight Rate (₹/MT)"><input type="number" value={f.freightPerTonne || ""} onChange={e => set("freightPerTonne")(e.target.value)} /></FG>
+        <FG label="Std Valuation / Selling Rate (₹/MT)"><input type="number" value={f.stdSellingRate || ""} onChange={e => set("stdSellingRate")(e.target.value)} /></FG>
+      </div>
+      <button className="btn btn-primary" style={{ marginTop: 14 }} onClick={save}>Save Configurations</button>
     </div>
   );
 }
 
+// ── 10. MASTER TABLE HELPER ───────────────────────────────────────────────────
 function MasterTableView({ title, noun, items, setItems, saveFn, delFn, fields, cols }) {
   const blank = Object.fromEntries(fields.map(f => [f.key, ""]));
   const [open, setOpen] = useState(false);
@@ -1230,31 +1507,32 @@ function MasterTableView({ title, noun, items, setItems, saveFn, delFn, fields, 
         <table>
           <thead><tr>{cols.map(c => <th key={c.label}>{c.label}</th>)}</tr></thead>
           <tbody>
-            {items.map(row => <tr key={row.id}>{cols.map(c => <td key={c.label}>{row[c.key]}</td>)}</tr>)}
+            {(items || []).map(row => <tr key={row.id}>{cols.map(c => <td key={c.label}>{row[c.key]}</td>)}</tr>)}
           </tbody>
         </table>
       </div>
       {open && (
         <Modal title={`New ${noun}`} onClose={() => setOpen(false)} foot={<><button className="btn btn-ghost" onClick={() => setOpen(false)}>Cancel</button><button className="btn btn-primary" onClick={save}>Save</button></>}>
-          {fields.map(fl => <FG key={fl.key} label={fl.label}><input value={f[fl.key] || ""} onChange={e => set(fl.key)(e.target.value)} /></FG>)}
+          {fields.map(fl => <FG key={fl.key} label={fl.label} span={fl.full ? 2 : undefined}><input value={f[fl.key] || ""} onChange={e => set(fl.key)(e.target.value)} /></FG>)}
         </Modal>
       )}
     </div>
   );
 }
 
+// ── 11. DASHBOARD OVERVIEW ────────────────────────────────────────────────────
 function DashboardView({ weighments, boulderReceipts, productionEntries, expenses, capitalItems, bankTxns, partnerCashbook }) {
-  const totalCapex = capitalItems.reduce((s, c) => s + c.amount, 0);
-  const bankBalance = bankTxns.reduce((s, t) => s + (t.credit - t.debit), 0);
-  const totalPartnerCapital = partnerCashbook.filter(e => e.type === "Capital Infusion").reduce((s, e) => s + e.amount, 0);
+  const totalCapex = (capitalItems || []).reduce((s, c) => s + (c.amount || 0), 0);
+  const bankBalance = (bankTxns || []).reduce((s, t) => s + ((t.credit || 0) - (t.debit || 0)), 0);
+  const totalPartnerCapital = (partnerCashbook || []).filter(e => e.type === "Capital Infusion").reduce((s, e) => s + (e.amount || 0), 0);
 
   return (
     <div className="stats-grid-5">
       <StatCard label="Fixed Assets Gross" value={fmt(totalCapex)} color="teal" sub="Land & Plant" />
       <StatCard label="Bank Balance" value={fmt(bankBalance)} color={bankBalance >= 0 ? "green" : "red"} sub="Liquid Cash" />
       <StatCard label="Partner Capital" value={fmt(totalPartnerCapital)} color="accent" sub="Contributed" />
-      <StatCard label="Boulder Dispatches" value={boulderReceipts.length} color="blue" sub="Receipt Loads" />
-      <StatCard label="Sales Dispatched" value={weighments.filter(w => w.purpose === "Sale").length} color="purple" sub="Slips Issued" />
+      <StatCard label="Boulder Inward" value={`${(boulderReceipts || []).reduce((s,r) => s + (r.quantityMT || 0), 0).toFixed(1)} MT`} color="blue" sub="Deliveries" />
+      <StatCard label="Sales Dispatched" value={`${(weighments || []).filter(w => w.purpose === "Sale").reduce((s,w) => s + ((w.netWeight || 0)/1000), 0).toFixed(1)} MT`} color="purple" sub="Slips" />
     </div>
   );
 }
