@@ -458,7 +458,7 @@ export default function App() {
             {view === "expenses" && <ExpensesView {...{ expenses, setExpenses }} />}
             {view === "capital" && <CapitalRegisterView {...{ capitalItems, setCapitalItems }} />}
             {view === "bankstatement" && <BankStatementGroupingView {...{ bankBatches, setBankBatches, bankTxns, setBankTxns, bankLabels, setBankLabels, setCapitalItems, setExpenses, setPartnerCashbook }} />}
-            {view === "partnercashbook" && <PartnerCashbookView {...{ partnerCashbook, setPartnerCashbook, bankLabels, setExpenses, setCapitalItems }} />}
+            {view === "partners" && (<PartnersCapitalDashboard {...{ bankTxns={bankTxns},bankLabels={bankLabels}, partnerCashbook={partnerCashbook}, setPartnerCashbook={setPartnerCashbook}, setExpenses={setExpenses} ,setCapitalItems={setCapitalItems} />)}
             {view === "balancesheet" && <BalanceSheetView {...{ capitalItems, bankTxns, partnerCashbook, purchases, expenses, weighments, grades, boulderReceipts, productionEntries, costConfig }} />}
             {view === "costs" && <CostSheetView {...{ purchases, expenses, productionEntries, weighments, costConfig }} />}
             {view === "costconfig" && <CostConfigView {...{ costConfig, setCostConfig }} />}
