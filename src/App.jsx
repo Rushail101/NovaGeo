@@ -336,6 +336,16 @@ function Modal({ title, onClose, children, foot, size="" }) {
   );
 }
 
+function EmptyState({ icon, message, sub }) {
+  return (
+    <div className="empty">
+      <div className="empty-icon">{icon || "📭"}</div>
+      <p style={{ fontWeight: 600, marginBottom: 4 }}>{message}</p>
+      {sub && <p style={{ fontSize: 11.5, color: "var(--text3)", marginTop: 4 }}>{sub}</p>}
+    </div>
+  );
+}
+
 // ── APP MAIN ──────────────────────────────────────────────────────────────────
 export default function App() {
   const [view, setView] = useState("dashboard");
