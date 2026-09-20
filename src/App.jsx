@@ -1454,31 +1454,43 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
     const list = [];
     const currentDate = new Date();
 
-    (capitalItems || []).forEach(c => {
-      if (!c) return;
-      const catConfig = CAP_CATS.find(x => x.id === (c.category || "machinery")) || { defaultRate: 15 };
-      const rate = catConfig.defaultRate / 100;
-      
-      const acqDate = new Date(c.date || today());
-      const ageYears = Math.max(0, (currentDate - acqDate) / (1000 * 60 * 60 * 24 * 365.25));
-      const originalAmount = +c.amount || 0;
-      const netBookValue = rate === 0 ? originalAmount : Math.max(0, originalAmount * Math.pow(1 - rate, ageYears));
+    (bankTxns || []).forEach(t => {
+      if (!t || !t.debit || t.debit <= 0) return;
+      const k = t.key || t.group_key || (t.description ? normalizeDesc(t.description) : "UNKNOWN");
+      const meta = (bankLabels || {})[k] || {};
+      const type = meta.type || "unlabeled";
 
-      list.push({
-        id: `manual-${c.id}`,
-        capNo: c.capNo || "CAP-M",
-        date: c.date,
-        category: c.category || "machinery",
-        subCategory: c.subCategory || "General",
-        description: c.description,
-        paidTo: c.paidTo || "—",
-        paymentMode: c.paymentMode || "bank",
-        fundedBy: c.fundedBy || "own",
-        paidByPartner: c.paidByPartner || "",
-        amount: originalAmount,
-        netBookValue,
-        source: "Manual"
-      });
+      if (type.startsWith("capital_")) {
+        const vendorName = (meta.label && meta.label.trim()) ? meta.label.trim() : k;
+        let cat = "machinery";
+        if (type === "capital_land") cat = "land";
+        else if (type === "capital_electrical") cat = "electrical";
+        else if (type === "capital_vehicles") cat = "vehicle";
+
+        const catConfig = CAP_CATS.find(x => x.id === cat) || { defaultRate: 15 };
+        const rate = catConfig.defaultRate / 100;
+
+        const acqDate = new Date(t.date || t.txn_date || today());
+        const ageYears = Math.max(0, (currentDate - acqDate) / (1000 * 60 * 60 * 24 * 365.25));
+        const originalAmount = +t.debit || 0;
+        const netBookValue = rate === 0 ? originalAmount : Math.max(0, originalAmount * Math.pow(1 - rate, ageYears));
+
+        list.push({
+          id: `bank-${t.id}`,
+          capNo: "CAP-B",
+          date: t.date || t.txn_date,
+          category: cat,
+          subCategory: vendorName, // Uses the exact group name from Bank Statement!
+          description: t.description,
+          paidTo: vendorName,
+          paymentMode: "bank",
+          fundedBy: "own",
+          paidByPartner: "",
+          amount: originalAmount,
+          netBookValue,
+          source: "Bank Statement"
+        });
+      }
     });
 
     (bankTxns || []).forEach(t => {
