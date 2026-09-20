@@ -937,7 +937,7 @@ function MonthlyOpsCostsView({ expenses, setExpenses }) {
 
 function ExpensesView({ expenses, setExpenses }) {
   const [open, setOpen] = useState(false);
-  const blank = { date:today(), category:"fuel", amount:"", description:"", paidTo:"", reference:"", paymentMode:"bank" };
+  const blank = { date: today(), category: "fuel", amount: "", description: "", paidTo: "", reference: "", paymentMode: "bank" };
   const [f, setF] = useState(blank);
   const set = k => v => setF(x => ({ ...x, [k]: v }));
 
@@ -950,32 +950,103 @@ function ExpensesView({ expenses, setExpenses }) {
     } catch (err) { alert(err.message); }
   }
 
+  // Calculate category totals dynamically
+  const categoryTotals = useMemo(() => {
+    const summary = {};
+    EXP_CATS.forEach(c => { summary[c.id] = { label: c.label, total: 0, count: 0 }; });
+    
+    (expenses || []).forEach(e => {
+      const cat = e.category || "misc";
+      if (!summary[cat]) {
+        summary[cat] = { label: cat.toUpperCase(), total: 0, count: 0 };
+      }
+      summary[cat].total += (+e.amount || 0);
+      summary[cat].count += 1;
+    });
+
+    return Object.entries(summary).filter(([, data]) => data.total > 0);
+  }, [expenses]);
+
+  const totalExpensesAll = (expenses || []).reduce((s, e) => s + (+e.amount || 0), 0);
+
   return (
     <div>
-      <div className="filter-bar"><button className="btn btn-primary" onClick={() => setOpen(true)}>+ Add Expense Entry</button></div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
+        <div>
+          <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>Operating Expenses Overview</h3>
+          <p style={{ fontSize: 12, color: "var(--text3)" }}>Total Spend: <strong style={{ color: "var(--red)" }}>{fmt(totalExpensesAll)}</strong></p>
+        </div>
+        <button className="btn btn-primary" onClick={() => setOpen(true)}>+ Add Expense Entry</button>
+      </div>
+
+      {/* Category Breakdown Cards */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10, marginBottom: 20 }}>
+        {categoryTotals.map(([catId, data]) => (
+          <div key={catId} className="stat-card red" style={{ padding: "12px 16px" }}>
+            <div className="stat-label">{data.label}</div>
+            <div className="stat-val red" style={{ fontSize: "18px" }}>{fmt(data.total)}</div>
+            <div className="stat-sub">{data.count} transaction(s)</div>
+          </div>
+        ))}
+      </div>
+
       <div className="table-wrap">
         <table>
-          <thead><tr><th>Exp #</th><th>Date</th><th>Category</th><th>Description</th><th>Paid To</th><th>Channel</th><th className="r">Amount</th></tr></thead>
+          <thead>
+            <tr>
+              <th>Exp #</th>
+              <th>Date</th>
+              <th>Category</th>
+              <th>Description</th>
+              <th>Paid To</th>
+              <th>Channel</th>
+              <th className="r">Amount</th>
+            </tr>
+          </thead>
           <tbody>
-            {expenses.map(e => (
-              <tr key={e.id}>
-                <td className="mono" style={{ color:"var(--accent)" }}>{e.expNo}</td>
-                <td className="mono">{e.date}</td><td><BadgeComponent type="muted">{e.category}</BadgeComponent></td>
-                <td>{e.description}</td><td>{e.paidTo || "—"}</td>
-                <td><BadgeComponent type={e.paymentMode === "cash" ? "amber" : "muted"}>{e.paymentMode}</BadgeComponent></td>
-                <td className="r mono" style={{ color:"var(--red)", fontWeight: 700 }}>₹{e.amount.toLocaleString()}</td>
-              </tr>
-            ))}
+            {(expenses || []).length === 0 ? (
+              <tr><td colSpan={7} style={{ textAlign: "center", color: "var(--text3)", padding: 24 }}>No expenses recorded yet</td></tr>
+            ) : (
+              (expenses || []).map(e => (
+                <tr key={e.id}>
+                  <td className="mono" style={{ color: "var(--accent)" }}>{e.expNo}</td>
+                  <td className="mono">{e.date}</td>
+                  <td><BadgeComponent type="muted">{e.category}</BadgeComponent></td>
+                  <td>{e.description}</td>
+                  <td>{e.paidTo || "—"}</td>
+                  <td><BadgeComponent type={e.paymentMode === "cash" ? "amber" : "muted"}>{e.paymentMode}</BadgeComponent></td>
+                  <td className="r mono" style={{ color: "var(--red)", fontWeight: 700 }}>{fmt(e.amount)}</td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>
 
       {open && (
         <Modal title="Record Direct Expense" onClose={() => setOpen(false)} foot={<><button className="btn btn-ghost" onClick={() => setOpen(false)}>Cancel</button><button className="btn btn-primary" onClick={save}>Save Expense</button></>}>
-          <div className="form-row cols-2"><FG label="Date"><input type="date" value={f.date} onChange={e => set("date")(e.target.value)} /></FG><FG label="Category"><select value={f.category} onChange={e => set("category")(e.target.value)}>{EXP_CATS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</select></FG></div>
-          <div className="form-row cols-2"><FG label="Amount (₹)"><input type="number" value={f.amount} onChange={e => set("amount")(e.target.value)} /></FG><FG label="Channel"><select value={f.paymentMode} onChange={e => set("paymentMode")(e.target.value)}><option value="bank">Bank / UPI</option><option value="cash">Site Petty Cash</option></select></FG></div>
+          <div className="form-row cols-2">
+            <FG label="Date"><input type="date" value={f.date} onChange={e => set("date")(e.target.value)} /></FG>
+            <FG label="Category">
+              <select value={f.category} onChange={e => set("category")(e.target.value)}>
+                {EXP_CATS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+              </select>
+            </FG>
+          </div>
+          <div className="form-row cols-2">
+            <FG label="Amount (₹)"><input type="number" value={f.amount} onChange={e => set("amount")(e.target.value)} /></FG>
+            <FG label="Channel">
+              <select value={f.paymentMode} onChange={e => set("paymentMode")(e.target.value)}>
+                <option value="bank">Bank / UPI</option>
+                <option value="cash">Site Petty Cash</option>
+              </select>
+            </FG>
+          </div>
           <div className="form-row"><FG label="Description"><input value={f.description} onChange={e => set("description")(e.target.value)} /></FG></div>
-          <div className="form-row cols-2"><FG label="Paid To"><input value={f.paidTo} onChange={e => set("paidTo")(e.target.value)} /></FG><FG label="Bill / Voucher Ref"><input value={f.reference} onChange={e => set("reference")(e.target.value)} /></FG></div>
+          <div className="form-row cols-2">
+            <FG label="Paid To"><input value={f.paidTo} onChange={e => set("paidTo")(e.target.value)} /></FG>
+            <FG label="Bill / Voucher Ref"><input value={f.reference} onChange={e => set("reference")(e.target.value)} /></FG>
+          </div>
         </Modal>
       )}
     </div>
