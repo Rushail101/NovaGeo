@@ -260,6 +260,7 @@ const EXP_CATS = [
   { id:"misc", label:"Miscellaneous" },
 ];
 const OPS_CATS = ["electric","water","salary","labour","fuel","maint","transport","misc"];
+
 const CAP_CATS = [
   { id: "land", label: "Land Acquisition & Development", defaultRate: 0 },
   { id: "civil", label: "Buildings & Civil Structures", defaultRate: 10 },
@@ -271,6 +272,7 @@ const CAP_CATS = [
   { id: "office", label: "Office & IT Equipment", defaultRate: 40 },
   { id: "other", label: "Other Capital Assets", defaultRate: 15 },
 ];
+
 const CP_TYPES = [
   { id:"unlabeled", label:"Unlabeled" }, { id:"vendor", label:"Vendor / Supplier" },
   { id:"customer", label:"Customer / Buyer" }, { id:"staff", label:"Staff / Labour" },
@@ -278,6 +280,8 @@ const CP_TYPES = [
   { id:"utility", label:"Utility / Rent" }, { id:"tax", label:"Tax / Government" },
   { id:"capital_machinery", label:"Capital Asset: Machinery" },
   { id:"capital_land", label:"Capital Asset: Land & Civil" },
+  { id:"capital_electrical", label:"Capital Asset: Electrical" },
+  { id:"capital_vehicles", label:"Capital Asset: Vehicles" },
   { id:"other", label:"Other" },
 ];
 
@@ -557,11 +561,7 @@ export default function App() {
             {view === "opscosts" && <MonthlyOpsCostsView {...{ expenses, setExpenses }} />}
             {view === "expenses" && <ExpensesView {...{ expenses, setExpenses, bankTxns, bankLabels }} />}
             {view === "capital" && <CapitalRegisterView {...{ capitalItems, setCapitalItems, bankTxns, bankLabels }} />}
-            {view === "bankstatement" && (
-              <BankStatementGroupingView 
-                {...{ bankBatches, setBankBatches, bankTxns, setBankTxns, bankLabels, setBankLabels, capitalItems, setCapitalItems, setExpenses, setPartnerCashbook }} 
-              />
-            )}
+            {view === "bankstatement" && <BankStatementGroupingView {...{ bankBatches, setBankBatches, bankTxns, setBankTxns, bankLabels, setBankLabels, capitalItems, setCapitalItems, setExpenses, setPartnerCashbook }} />}
             {view === "partners" && (
               <PartnersCapitalDashboard
                 bankTxns={bankTxns}
@@ -1459,12 +1459,10 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
       const catConfig = CAP_CATS.find(x => x.id === (c.category || "machinery")) || { defaultRate: 15 };
       const rate = catConfig.defaultRate / 100;
       
-      // Calculate age in years for WDV depreciation
       const acqDate = new Date(c.date || today());
       const ageYears = Math.max(0, (currentDate - acqDate) / (1000 * 60 * 60 * 24 * 365.25));
       const originalAmount = +c.amount || 0;
       const netBookValue = rate === 0 ? originalAmount : Math.max(0, originalAmount * Math.pow(1 - rate, ageYears));
-      const depreciation = originalAmount - netBookValue;
 
       list.push({
         id: `manual-${c.id}`,
@@ -1479,7 +1477,6 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
         paidByPartner: c.paidByPartner || "",
         amount: originalAmount,
         netBookValue,
-        depreciation,
         source: "Manual"
       });
     });
@@ -1492,7 +1489,11 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
 
       if (type.startsWith("capital_")) {
         const vendorName = (meta.label && meta.label.trim()) ? meta.label.trim() : k;
-        const cat = type === "capital_land" ? "land" : "machinery";
+        let cat = "machinery";
+        if (type === "capital_land") cat = "land";
+        else if (type === "capital_electrical") cat = "electrical";
+        else if (type === "capital_vehicles") cat = "vehicle";
+
         const catConfig = CAP_CATS.find(x => x.id === cat) || { defaultRate: 15 };
         const rate = catConfig.defaultRate / 100;
 
@@ -1500,7 +1501,6 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
         const ageYears = Math.max(0, (currentDate - acqDate) / (1000 * 60 * 60 * 24 * 365.25));
         const originalAmount = +t.debit || 0;
         const netBookValue = rate === 0 ? originalAmount : Math.max(0, originalAmount * Math.pow(1 - rate, ageYears));
-        const depreciation = originalAmount - netBookValue;
 
         list.push({
           id: `bank-${t.id}`,
@@ -1515,7 +1515,6 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
           paidByPartner: "",
           amount: originalAmount,
           netBookValue,
-          depreciation,
           source: "Bank Statement"
         });
       }
@@ -1780,7 +1779,7 @@ function BankStatementGroupingView({ bankBatches, setBankBatches, bankTxns, setB
     } catch (err) { alert(err.message); }
   }
 
- async function updateLabel(rawKeys, patch) {
+  async function updateLabel(rawKeys, patch) {
     try {
       await db.updateBankLabels(rawKeys, patch);
       setBankLabels(bl => {
@@ -1790,32 +1789,36 @@ function BankStatementGroupingView({ bankBatches, setBankBatches, bankTxns, setB
       });
 
       if (patch.type && patch.type.startsWith("capital_")) {
-        const cat = patch.type === "capital_land" ? "land" : "machinery";
-        
-        // Find existing capital descriptions to prevent duplicates
+        let cat = "machinery";
+        if (patch.type === "capital_land") cat = "land";
+        else if (patch.type === "capital_electrical") cat = "electrical";
+        else if (patch.type === "capital_vehicles") cat = "vehicle";
+
         const existingDescriptions = new Set((capitalItems || []).map(c => `${c.description}-${c.amount}`));
 
         for (const t of bankTxns) {
           if (rawKeys.includes(t.key) && t.debit > 0) {
             const uniqueKey = `${t.description}-${t.debit}`;
-            if (existingDescriptions.has(uniqueKey)) continue; // Skip if already added
+            if (existingDescriptions.has(uniqueKey)) continue;
 
             const capitalPayload = {
               date: t.date || t.txn_date,
               category: cat,
+              subCategory: "Bank Auto-Routed",
               description: t.description,
               amount: t.debit,
               paidTo: patch.label || t.key,
               fundedBy: "own",
               paymentMode: "bank",
-              reference: ""
+              reference: "",
+              paidByPartner: ""
             };
             const savedItem = await db.saveCapitalItem(capitalPayload);
             setCapitalItems(cs => [savedItem, ...cs]);
             existingDescriptions.add(uniqueKey);
           }
         }
-        alert("Counterparty mapped to Capital Assets successfully!");
+        alert("Counterparty mapped to Capital Assets and saved permanently!");
       }
     } catch (err) { alert(err.message); }
   }
@@ -2066,7 +2069,7 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPa
   const totalCashSpentAll = partnerSummaries.reduce((s, p) => s + p.cashSpentOnSite, 0);
   const totalDrawingsAll = partnerSummaries.reduce((s, p) => s + p.drawingsTaken, 0);
 
-  const [cf, setCf] = useState({ partnerName: "", date: today(), amount: "", isCapex: false, category: "misc", description: "", ref: "" });
+  const [cf, setCf] = useState({ partnerName: "", date: today(), amount: "", isCapex: false, category: "machinery", description: "", ref: "" });
 
   useEffect(() => {
     if (!cf.partnerName && partners.length > 0) {
@@ -2082,7 +2085,7 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPa
       if (res.isCapex) setCapitalItems(prev => [res.item, ...(prev || [])]);
       else setExpenses(prev => [res.item, ...(prev || [])]);
       setOpenCashModal(false);
-      setCf({ partnerName: partners[0] || "", date: today(), amount: "", isCapex: false, category: "misc", description: "", ref: "" });
+      setCf({ partnerName: partners[0] || "", date: today(), amount: "", isCapex: false, category: "machinery", description: "", ref: "" });
       alert(`Logged ${fmt(cf.amount)} paid by ${cf.partnerName}!`);
     } catch (err) { alert(err.message); }
   }
