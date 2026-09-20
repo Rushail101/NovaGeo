@@ -1309,6 +1309,9 @@ function ExpensesView({ expenses, setExpenses, bankTxns, bankLabels }) {
 
 function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabels }) {
   const [open, setOpen] = useState(false);
+  const [expandedCategory, setExpandedCategory] = useState(null);
+  const [search, setSearch] = useState("");
+
   const blank = { date: today(), category: "machinery", description: "", amount: "", paidTo: "", reference: "", fundedBy: "own", paymentMode: "bank", paidByPartner: "" };
   const [f, setF] = useState(blank);
   const set = k => v => setF(x => ({ ...x, [k]: v }));
@@ -1326,7 +1329,6 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
   const allCapitalRows = useMemo(() => {
     const list = [];
 
-    // 1. Manual capital items
     (capitalItems || []).forEach(c => {
       if (!c) return;
       list.push({
@@ -1343,7 +1345,6 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
       });
     });
 
-    // 2. Bank statement debits tagged as capital assets
     (bankTxns || []).forEach(t => {
       if (!t || !t.debit || t.debit <= 0) return;
       const k = t.key || t.group_key || (t.description ? normalizeDesc(t.description) : "UNKNOWN");
@@ -1372,21 +1373,29 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
     return list.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
   }, [capitalItems, bankTxns, bankLabels]);
 
-  const categoryTotals = useMemo(() => {
-    const summary = {};
-    CAP_CATS.forEach(c => { summary[c.id] = { label: c.label, total: 0, count: 0 }; });
-    
-    allCapitalRows.forEach(item => {
-      const cat = item.category || "other";
-      if (!summary[cat]) {
-        summary[cat] = { label: cat.toUpperCase(), total: 0, count: 0 };
-      }
-      summary[cat].total += (+item.amount || 0);
-      summary[cat].count += 1;
+  // Group rows by asset category
+  const categoryGroups = useMemo(() => {
+    const map = {};
+    CAP_CATS.forEach(c => {
+      map[c.id] = { categoryId: c.id, label: c.label, total: 0, items: [] };
     });
 
-    return Object.entries(summary).filter(([, data]) => data.total > 0);
+    allCapitalRows.forEach(item => {
+      const cat = item.category || "other";
+      if (!map[cat]) {
+        map[cat] = { categoryId: cat, label: cat.toUpperCase(), total: 0, items: [] };
+      }
+      map[cat].total += item.amount;
+      map[cat].items.push(item);
+    });
+
+    return Object.values(map).filter(g => g.total > 0).sort((a, b) => b.total - a.total);
   }, [allCapitalRows]);
+
+  const filteredGroups = categoryGroups.filter(g => {
+    if (!search) return true;
+    return g.label.toLowerCase().includes(search.toLowerCase()) || g.items.some(i => i.description.toLowerCase().includes(search.toLowerCase()) || i.paidTo.toLowerCase().includes(search.toLowerCase()));
+  });
 
   const totalCapexAll = allCapitalRows.reduce((s, c) => s + (+c.amount || 0), 0);
 
@@ -1395,58 +1404,86 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
         <div>
           <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>Capital & Infrastructure Assets (Capex)</h3>
-          <p style={{ fontSize: 12, color: "var(--text3)" }}>Total Capital Invested: <strong style={{ color: "var(--accent)" }}>{fmt(totalCapexAll)}</strong></p>
+          <p style={{ fontSize: 12, color: "var(--text3)" }}>Manage fixed asset blocks, land registries, and heavy machinery investments.</p>
         </div>
-        <button className="btn btn-primary" onClick={() => setOpen(true)}>+ Add Fixed Asset (Land, Machinery, Civil)</button>
+        <button className="btn btn-primary" onClick={() => setOpen(true)}>+ Add Fixed Asset</button>
       </div>
 
-      {categoryTotals.length > 0 && (
-        <div style={{ marginBottom: 20 }}>
-          <div style={{ fontSize: 11, color: "var(--text3)", textTransform: "uppercase", fontFamily: "var(--mono)", marginBottom: 8 }}>Asset Block Breakdown</div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
-            {categoryTotals.map(([catId, data]) => (
-              <div key={catId} className="stat-card teal" style={{ padding: "12px 16px" }}>
-                <div className="stat-label">{data.label}</div>
-                <div className="stat-val teal" style={{ fontSize: "18px" }}>{fmt(data.total)}</div>
-                <div className="stat-sub">{data.count} asset item(s)</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      <div className="stats-grid">
+        <StatCard label="Total Capital Invested" value={fmt(totalCapexAll)} color="accent" sub="Gross Fixed Assets" />
+        <StatCard label="Active Asset Blocks" value={categoryGroups.length} color="teal" sub="Categories with capex" />
+        <StatCard label="Total Asset Items" value={allCapitalRows.length} color="blue" sub="Registered items" />
+        <StatCard label="Funding Structure" value="Partner / Bank" color="purple" sub="Equity & Debt backed" />
+      </div>
 
-      <div className="table-wrap">
-        <div className="table-toolbar">
-          <h3>Asset Registry ({allCapitalRows.length})</h3>
-        </div>
-        <table>
-          <thead>
-            <tr>
-              <th>Type</th>
-              <th>Date</th>
-              <th>Category</th>
-              <th>Asset Description / Vendor</th>
-              <th>Source</th>
-              <th className="r">Amount</th>
-            </tr>
-          </thead>
-          <tbody>
-            {allCapitalRows.length === 0 ? (
-              <tr><td colSpan={6} style={{ textAlign: "center", color: "var(--text3)", padding: 32 }}>No capital assets recorded yet. Tag a bank group as Capital Asset or add manually.</td></tr>
-            ) : (
-              allCapitalRows.map(c => (
-                <tr key={c.id}>
-                  <td className="mono" style={{ color: "var(--accent)" }}>{c.capNo}</td>
-                  <td className="mono" style={{ fontSize: 11, color: "var(--text3)" }}>{c.date}</td>
-                  <td><BadgeComponent type="teal">{c.category}</BadgeComponent></td>
-                  <td style={{ fontWeight: 600 }}>{c.description} <span style={{ color: "var(--text3)", fontWeight: 400 }}>({c.paidTo})</span></td>
-                  <td><BadgeComponent type={c.source === "Bank Statement" ? "blue" : "accent"}>{c.source}</BadgeComponent></td>
-                  <td className="r mono" style={{ color: "var(--accent)", fontWeight: 700 }}>{fmt(c.amount)}</td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+      <div className="filter-bar">
+        <input
+          placeholder="Search category, description, or vendor…"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          style={{ background: "var(--bg3)", border: "1px solid var(--border2)", borderRadius: "var(--r)", padding: "7px 11px", color: "var(--text)", fontSize: 12.5, minWidth: 280 }}
+        />
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {filteredGroups.length === 0 ? (
+          <div className="config-card" style={{ textAlign: "center", padding: 32 }}>
+            <EmptyState icon="🏗" message="No capital assets found" sub="Add land registries or machinery manually or tag bank statement groups." />
+          </div>
+        ) : (
+          filteredGroups.map(g => (
+            <div key={g.categoryId} className="config-card" style={{ padding: 14 }}>
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end", justifyContent: "space-between" }}>
+                <div>
+                  <div style={{ fontSize: 11, color: "var(--text3)", fontFamily: "var(--mono)", textTransform: "uppercase" }}>Asset Block</div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text)", marginTop: 2 }}>{g.label}</div>
+                </div>
+                <div style={{ display: "flex", gap: 18, fontFamily: "var(--mono)", fontSize: 12.5 }}>
+                  <div><div style={{ color: "var(--text3)", fontSize: 10 }}>TOTAL INVESTED</div><div style={{ color: "var(--accent)", fontWeight: 700 }}>{fmt(g.total)}</div></div>
+                  <div><div style={{ color: "var(--text3)", fontSize: 10 }}>ITEMS</div><div style={{ fontWeight: 700 }}>{g.items.length}</div></div>
+                </div>
+              </div>
+
+              <div style={{ marginTop: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: 11, color: "var(--text3)", fontFamily: "var(--mono)" }}>
+                  Category ID: {g.categoryId}
+                </span>
+                <button className="btn btn-ghost btn-sm" onClick={() => setExpandedCategory(x => x === g.categoryId ? null : g.categoryId)}>
+                  {expandedCategory === g.categoryId ? "Hide" : "View"} items ({g.items.length})
+                </button>
+              </div>
+
+              {expandedCategory === g.categoryId && (
+                <div className="table-wrap" style={{ marginTop: 10 }}>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Date</th>
+                        <th>Description</th>
+                        <th>Paid To</th>
+                        <th>Funding</th>
+                        <th>Source</th>
+                        <th className="r">Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {g.items.sort((a, b) => (b.date || "").localeCompare(a.date || "")).map(item => (
+                        <tr key={item.id}>
+                          <td className="mono" style={{ fontSize: 11, color: "var(--text3)" }}>{item.date}</td>
+                          <td style={{ fontWeight: 600 }}>{item.description}</td>
+                          <td>{item.paidTo}</td>
+                          <td><BadgeComponent type={item.fundedBy === "loan" ? "amber" : "green"}>{item.fundedBy}</BadgeComponent></td>
+                          <td><BadgeComponent type={item.source === "Bank Statement" ? "blue" : "accent"}>{item.source}</BadgeComponent></td>
+                          <td className="r mono" style={{ color: "var(--accent)", fontWeight: 700 }}>{fmt(item.amount)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          ))
+        )}
       </div>
 
       {open && (
