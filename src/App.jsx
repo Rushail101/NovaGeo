@@ -271,10 +271,16 @@ const CAP_CATS = [
   { id:"other", label:"Other Capital Assets" },
 ];
 const CP_TYPES = [
-  { id:"unlabeled", label:"Unlabeled" }, { id:"vendor", label:"Vendor / Supplier" },
-  { id:"customer", label:"Customer / Buyer" }, { id:"staff", label:"Staff / Labour" },
-  { id:"owner", label:"Owner / Capital" }, { id:"loan", label:"Loan / Bank" },
-  { id:"utility", label:"Utility / Rent" }, { id:"tax", label:"Tax / Government" },
+  { id:"unlabeled", label:"Unlabeled" }, 
+  { id:"vendor", label:"Vendor / Supplier" },
+  { id:"customer", label:"Customer / Buyer" }, 
+  { id:"staff", label:"Staff / Labour" },
+  { id:"owner", label:"Owner / Capital" }, 
+  { id:"loan", label:"Loan / Bank" },
+  { id:"utility", label:"Utility / Rent" }, 
+  { id:"tax", label:"Tax / Government" },
+  { id:"capital_machinery", label:"Capital Asset: Machinery" },
+  { id:"capital_land", label:"Capital Asset: Land & Civil" },
   { id:"other", label:"Other" },
 ];
 
@@ -1537,6 +1543,7 @@ function BankStatementGroupingView({ bankBatches, setBankBatches, bankTxns, setB
     } catch (err) { alert(err.message); }
   }
 
+  // AUTO-ROUTING LOGIC WHEN UPDATING LABELS/TYPES
   async function updateLabel(rawKeys, patch) {
     try {
       await db.updateBankLabels(rawKeys, patch);
@@ -1545,30 +1552,18 @@ function BankStatementGroupingView({ bankBatches, setBankBatches, bankTxns, setB
         rawKeys.forEach(k => { next[k] = { ...next[k], ...patch }; });
         return next;
       });
-    } catch (err) { alert(err.message); }
-  }
 
-  async function promoteToCapital(t) {
-    try {
-      const item = await db.promoteTxnToCapital(t, "machinery", "own");
-      setCapitalItems(cs => [item, ...cs]);
-      alert(`Promoted ${fmt(t.debit)} to Capital Assets!`);
-    } catch (err) { alert(err.message); }
-  }
-
-  async function promoteToExpense(t) {
-    try {
-      const exp = await db.promoteTxnToExpense(t, "misc");
-      setExpenses(es => [exp, ...es]);
-      alert(`Promoted ${fmt(t.debit)} to Expenses!`);
-    } catch (err) { alert(err.message); }
-  }
-
-  async function logCashbook(t, partnerName, type, accountType) {
-    try {
-      const entry = await db.logPartnerCashbookEntry(t, partnerName, type, accountType);
-      setPartnerCashbook(cb => [entry, ...cb]);
-      alert(`Logged ${type} of ${fmt(entry.amount)} for ${partnerName}`);
+      // If type changed to a capital asset category, auto-promote matching bank txns
+      if (patch.type && patch.type.startsWith("capital_")) {
+        const cat = patch.type === "capital_land" ? "land" : "machinery";
+        bankTxns.forEach(async t => {
+          if (rawKeys.includes(t.key) && t.debit > 0) {
+            const item = await db.promoteTxnToCapital(t, cat, "own");
+            setCapitalItems(cs => [item, ...cs]);
+          }
+        });
+        alert("Group categorized as Capital Asset. Matching debit transactions auto-routed to Capital & Infra!");
+      }
     } catch (err) { alert(err.message); }
   }
 
@@ -1671,7 +1666,7 @@ function BankStatementGroupingView({ bankBatches, setBankBatches, bankTxns, setB
                         onSave={updateLabel}
                       />
                     </FG>
-                    <FG label="Type">
+                    <FG label="Type / Category Routing">
                       <select value={g.type} onChange={e => updateLabel(g.rawKeys, { type: e.target.value })}>
                         {CP_TYPES.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
                       </select>
@@ -1708,15 +1703,6 @@ function BankStatementGroupingView({ bankBatches, setBankBatches, bankTxns, setB
                               <div style={{ display:"flex", gap:4, justifyContent:"flex-end" }}>
                                 {t.credit > 0 && g.type === "owner" && (
                                   <button className="btn btn-primary btn-sm" onClick={() => logCashbook(t, g.label || g.key, "Capital Infusion", "capital")}>+ Equity</button>
-                                )}
-                                {t.debit > 0 && (
-                                  <>
-                                    <button className="btn btn-ghost btn-sm" title="Promote to Capital Assets" onClick={() => promoteToCapital(t)}>+ Cap</button>
-                                    <button className="btn btn-ghost btn-sm" title="Promote to Expenses" onClick={() => promoteToExpense(t)}>+ Exp</button>
-                                    {g.type === "owner" && (
-                                      <button className="btn btn-danger btn-sm" title="Log Drawing" onClick={() => logCashbook(t, g.label || g.key, "Drawings", "current")}>+ Draw</button>
-                                    )}
-                                  </>
                                 )}
                               </div>
                             </td>
