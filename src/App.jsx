@@ -970,7 +970,10 @@ function StockLedgerView({ grades, boulderReceipts, productionEntries, weighment
 
 function PurchasesView({ suppliers, purchases, setPurchases }) {
   const [open, setOpen] = useState(false);
-  const blank = { date:today(), supplierId:"", description:"", quantityMT:"", ratePerMT:"", gstPct:"5", invoiceNo:"", remarks:"" };
+  const [expandedSupplier, setExpandedSupplier] = useState(null);
+  const [search, setSearch] = useState("");
+
+  const blank = { date: today(), supplierId: "", description: "", quantityMT: "", ratePerMT: "", gstPct: "5", invoiceNo: "", remarks: "" };
   const [f, setF] = useState(blank);
   const set = k => v => setF(x => ({ ...x, [k]: v }));
 
@@ -983,186 +986,51 @@ function PurchasesView({ suppliers, purchases, setPurchases }) {
     } catch (err) { alert(err.message); }
   }
 
-  return (
-    <div>
-      <div className="filter-bar"><button className="btn btn-primary" onClick={() => setOpen(true)}>+ New RM Purchase Order</button></div>
-      <div className="table-wrap">
-        <table>
-          <thead><tr><th>PO #</th><th>Date</th><th>Supplier</th><th className="r">Qty (MT)</th><th className="r">Rate</th><th className="r">Taxable</th><th className="r">Total</th></tr></thead>
-          <tbody>
-            {purchases.map(p => (
-              <tr key={p.id}>
-                <td className="mono" style={{ color:"var(--accent)" }}>{p.poNo}</td>
-                <td className="mono">{p.date}</td><td>{p.supplierName}</td>
-                <td className="r mono">{fmtMT(p.quantityMT)}</td><td className="r mono">₹{p.ratePerMT}</td>
-                <td className="r mono">₹{p.taxableAmount.toLocaleString()}</td>
-                <td className="r mono" style={{ fontWeight:700, color:"var(--amber)" }}>₹{p.totalAmount.toLocaleString()}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {open && (
-        <Modal title="Record Raw Material Purchase" onClose={() => setOpen(false)} foot={<><button className="btn btn-ghost" onClick={() => setOpen(false)}>Cancel</button><button className="btn btn-primary" onClick={save}>Save Purchase</button></>}>
-          <div className="form-row cols-2"><FG label="Date"><input type="date" value={f.date} onChange={e => set("date")(e.target.value)} /></FG><FG label="Supplier"><select value={f.supplierId} onChange={e => set("supplierId")(e.target.value)}><option value="">Select...</option>{suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></FG></div>
-          <div className="form-row cols-3"><FG label="Quantity (MT)"><input type="number" step="0.001" value={f.quantityMT} onChange={e => set("quantityMT")(e.target.value)} /></FG><FG label="Rate / MT (₹)"><input type="number" value={f.ratePerMT} onChange={e => set("ratePerMT")(e.target.value)} /></FG><FG label="GST %"><select value={f.gstPct} onChange={e => set("gstPct")(e.target.value)}>{[0,5,12,18].map(r => <option key={r} value={r}>{r}%</option>)}</select></FG></div>
-          <div className="form-row"><FG label="Invoice #"><input value={f.invoiceNo} onChange={e => set("invoiceNo")(e.target.value)} /></FG></div>
-        </Modal>
-      )}
-    </div>
-  );
-}
-
-function MonthlyOpsCostsView({ expenses, setExpenses }) {
-  const [ym, setYm] = useState(today().slice(0, 7));
-  const [vals, setVals] = useState({});
-  useEffect(() => {
-    const next = {};
-    OPS_CATS.forEach(c => {
-      const ex = expenses.filter(e => e.opsAuto && e.category === c && e.date?.slice(0, 7) === ym);
-      next[c] = ex.length ? String(ex.reduce((s, e) => s + e.amount, 0)) : "";
-    });
-    setVals(next);
-  }, [ym, expenses]);
-
-  async function save() {
-    try {
-      const updated = await db.saveMonthlyOpsCosts(ym, vals);
-      setExpenses(es => [...es.filter(e => !(e.opsAuto && e.date?.slice(0,7) === ym)), ...updated]);
-      alert("Monthly overheads synchronized!");
-    } catch (err) { alert(err.message); }
-  }
-
-  return (
-    <div className="config-card">
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
-        <h3>Monthly Operations Quick Entry</h3>
-        <FG label="Month Filter"><input type="month" value={ym} onChange={e => setYm(e.target.value)} style={{ padding:4 }} /></FG>
-      </div>
-      <div className="config-row">
-        {OPS_CATS.map(c => (
-          <FG key={c} label={`${c.toUpperCase()} (₹)`}>
-            <input type="number" value={vals[c] || ""} onChange={e => setVals({ ...vals, [c]: e.target.value })} />
-          </FG>
-        ))}
-      </div>
-      <button className="btn btn-primary" style={{ marginTop: 14 }} onClick={save}>Sync Overheads to Ledger</button>
-    </div>
-  );
-}
-
-function ExpensesView({ expenses, setExpenses, bankTxns, bankLabels }) {
-  const [open, setOpen] = useState(false);
-  const [expandedGroup, setExpandedGroup] = useState(null);
-  const [search, setSearch] = useState("");
-  const [selectedVendorForStmt, setSelectedVendorForStmt] = useState(null);
-  
-  const blank = { date: today(), category: "fuel", amount: "", description: "", paidTo: "", reference: "", paymentMode: "bank", totalDue: "" };
-  const [f, setF] = useState(blank);
-  const set = k => v => setF(x => ({ ...x, [k]: v }));
-
-  async function save() {
-    if (!f.amount || !f.description) return alert("Amount and description required.");
-    try {
-      const row = await db.saveExpense(f);
-      setExpenses(es => [row, ...es]);
-      setOpen(false); setF(blank);
-    } catch (err) { alert(err.message); }
-  }
-
-  const expenseGroups = useMemo(() => {
+  // Group purchases by supplier name
+  const supplierGroups = useMemo(() => {
     const map = {};
-
-    (bankTxns || []).forEach(t => {
-      if (!t || !t.debit || t.debit <= 0) return;
-      const k = t.key || t.group_key || (t.description ? normalizeDesc(t.description) : "UNKNOWN");
-      const meta = (bankLabels || {})[k] || {};
-      const vendorName = (meta.label && meta.label.trim()) ? meta.label.trim() : k;
-      const cpType = meta.type || "unlabeled";
-
-      if (cpType === "owner") return;
-
-      const groupKey = vendorName.toLowerCase();
-      if (!map[groupKey]) {
-        map[groupKey] = {
-          groupKey,
-          vendorName,
-          type: cpType,
-          totalPaid: 0,
-          totalDue: 0,
-          txns: []
-        };
+    (purchases || []).forEach(p => {
+      if (!p) return;
+      const sName = p.supplierName || "Unknown Supplier";
+      const key = sName.toLowerCase();
+      if (!map[key]) {
+        map[key] = { key, supplierName: sName, totalQtyMT: 0, totalSpend: 0, pos: [] };
       }
-      map[groupKey].totalPaid += (+t.debit || 0);
-      map[groupKey].txns.push({
-        id: `bank-${t.id}`,
-        date: t.date || t.txn_date,
-        description: t.description,
-        amount: +t.debit,
-        source: "Bank Statement"
-      });
+      map[key].totalQtyMT += (+p.quantityMT || 0);
+      map[key].totalSpend += (+p.totalAmount || 0);
+      map[key].pos.push(p);
     });
+    return Object.values(map).sort((a, b) => b.totalSpend - a.totalSpend);
+  }, [purchases]);
 
-    (expenses || []).forEach(e => {
-      if (!e) return;
-      const vendorName = e.paidTo || e.description || "General Expense";
-      const groupKey = vendorName.toLowerCase();
-      const amt = +e.amount || 0;
-      const due = +e.totalDue || 0;
-
-      if (!map[groupKey]) {
-        map[groupKey] = {
-          groupKey,
-          vendorName,
-          type: e.category || "vendor",
-          totalPaid: 0,
-          totalDue: 0,
-          txns: []
-        };
-      }
-      map[groupKey].totalPaid += amt;
-      map[groupKey].totalDue += Math.max(0, due - amt);
-      map[groupKey].txns.push({
-        id: `manual-${e.id}`,
-        date: e.date,
-        description: e.description,
-        amount: amt,
-        source: "Manual Entry"
-      });
-    });
-
-    return Object.values(map).sort((a, b) => (b.totalPaid + b.totalDue) - (a.totalPaid + a.totalDue));
-  }, [bankTxns, bankLabels, expenses]);
-
-  const filteredGroups = expenseGroups.filter(g => {
+  const filteredGroups = supplierGroups.filter(g => {
     if (!search) return true;
-    return g.vendorName.toLowerCase().includes(search.toLowerCase()) || g.txns.some(t => t.description.toLowerCase().includes(search.toLowerCase()));
+    return g.supplierName.toLowerCase().includes(search.toLowerCase()) || g.pos.some(p => (p.invoiceNo || "").toLowerCase().includes(search.toLowerCase()));
   });
 
-  const totalPaidAll = expenseGroups.reduce((s, g) => s + g.totalPaid, 0);
-  const totalDueAll = expenseGroups.reduce((s, g) => s + g.totalDue, 0);
+  const totalSpendAll = (purchases || []).reduce((s, p) => s + (+p.totalAmount || 0), 0);
+  const totalQtyAll = (purchases || []).reduce((s, p) => s + (+p.quantityMT || 0), 0);
 
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
         <div>
-          <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>Vendor Expenses & Payable Tracking</h3>
-          <p style={{ fontSize: 12, color: "var(--text3)" }}>Manage vendor disbursements, invoices, and pending payment obligations.</p>
+          <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>Raw Material Purchases & Supplier Ledger</h3>
+          <p style={{ fontSize: 12, color: "var(--text3)" }}>Track raw boulder deliveries, supplier rates, and purchase order invoices.</p>
         </div>
-        <button className="btn btn-primary" onClick={() => setOpen(true)}>+ Add Expense / Invoice Due</button>
+        <button className="btn btn-primary" onClick={() => setOpen(true)}>+ New RM Purchase Order</button>
       </div>
 
       <div className="stats-grid">
-        <StatCard label="Total Paid Out" value={fmt(totalPaidAll)} color="red" sub="Cleared Disbursements" />
-        <StatCard label="Pending / Due Payments" value={fmt(totalDueAll)} color="amber" sub="Expected Liabilities" />
-        <StatCard label="Total Exposure" value={fmt(totalPaidAll + totalDueAll)} color="blue" sub="Paid + Due" />
-        <StatCard label="Active Vendors" value={expenseGroups.length} color="purple" sub="Counterparty groups" />
+        <StatCard label="Total Spend" value={fmt(totalSpendAll)} color="amber" sub="Cumulative PO value" />
+        <StatCard label="Total Boulder Procured" value={fmtMT(totalQtyAll)} color="teal" sub="Raw material tonnage" />
+        <StatCard label="Active Suppliers" value={supplierGroups.length} color="blue" sub="Supplier accounts" />
+        <StatCard label="Total POs Logged" value={(purchases || []).length} color="purple" sub="Invoice entries" />
       </div>
 
       <div className="filter-bar">
         <input
-          placeholder="Search vendor or description…"
+          placeholder="Search supplier or invoice #…"
           value={search}
           onChange={e => setSearch(e.target.value)}
           style={{ background: "var(--bg3)", border: "1px solid var(--border2)", borderRadius: "var(--r)", padding: "7px 11px", color: "var(--text)", fontSize: 12.5, minWidth: 260 }}
@@ -1172,55 +1040,54 @@ function ExpensesView({ expenses, setExpenses, bankTxns, bankLabels }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         {filteredGroups.length === 0 ? (
           <div className="config-card" style={{ textAlign: "center", padding: 32 }}>
-            <EmptyState icon="💸" message="No vendor expenses or payments found" sub="Import a bank statement or record an expense invoice." />
+            <EmptyState icon="📥" message="No purchases recorded yet" sub="Click above to log raw material purchase orders." />
           </div>
         ) : (
           filteredGroups.map(g => (
-            <div key={g.groupKey} className="config-card" style={{ padding: 14 }}>
+            <div key={g.key} className="config-card" style={{ padding: 14 }}>
               <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end", justifyContent: "space-between" }}>
                 <div>
-                  <div style={{ fontSize: 11, color: "var(--text3)", fontFamily: "var(--mono)", textTransform: "uppercase" }}>Vendor / Counterparty</div>
-                  <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text)", marginTop: 2 }}>{g.vendorName}</div>
+                  <div style={{ fontSize: 11, color: "var(--text3)", fontFamily: "var(--mono)", textTransform: "uppercase" }}>Supplier Account</div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text)", marginTop: 2 }}>{g.supplierName}</div>
                 </div>
                 <div style={{ display: "flex", gap: 18, fontFamily: "var(--mono)", fontSize: 12.5 }}>
-                  <div><div style={{ color: "var(--text3)", fontSize: 10 }}>PAID</div><div style={{ color: "var(--red)", fontWeight: 700 }}>{fmt(g.totalPaid)}</div></div>
-                  <div><div style={{ color: "var(--text3)", fontSize: 10 }}>LEFT / DUE</div><div style={{ color: "var(--amber)", fontWeight: 700 }}>{fmt(g.totalDue)}</div></div>
-                  <div><div style={{ color: "var(--text3)", fontSize: 10 }}>TXNS</div><div style={{ fontWeight: 700 }}>{g.txns.length}</div></div>
+                  <div><div style={{ color: "var(--text3)", fontSize: 10 }}>TOTAL SPEND</div><div style={{ color: "var(--amber)", fontWeight: 700 }}>{fmt(g.totalSpend)}</div></div>
+                  <div><div style={{ color: "var(--text3)", fontSize: 10 }}>QTY PROCURED</div><div style={{ color: "var(--teal)", fontWeight: 700 }}>{fmtMT(g.totalQtyMT)}</div></div>
+                  <div><div style={{ color: "var(--text3)", fontSize: 10 }}>ORDERS</div><div style={{ fontWeight: 700 }}>{g.pos.length}</div></div>
                 </div>
               </div>
 
               <div style={{ marginTop: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span style={{ fontSize: 11, color: "var(--text3)", fontFamily: "var(--mono)" }}>
-                  Category: {g.type}
+                  Avg Rate: ₹{g.totalQtyMT > 0 ? (g.totalSpend / g.totalQtyMT).toFixed(0) : 0} / MT
                 </span>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button className="btn btn-info btn-sm" onClick={() => setSelectedVendorForStmt(g)}>
-                    📄 Party Statement
-                  </button>
-                  <button className="btn btn-ghost btn-sm" onClick={() => setExpandedGroup(x => x === g.groupKey ? null : g.groupKey)}>
-                    {expandedGroup === g.groupKey ? "Hide" : "View"} transactions ({g.txns.length})
-                  </button>
-                </div>
+                <button className="btn btn-ghost btn-sm" onClick={() => setExpandedSupplier(x => x === g.key ? null : g.key)}>
+                  {expandedSupplier === g.key ? "Hide" : "View"} purchase orders ({g.pos.length})
+                </button>
               </div>
 
-              {expandedGroup === g.groupKey && (
+              {expandedSupplier === g.key && (
                 <div className="table-wrap" style={{ marginTop: 10 }}>
                   <table>
                     <thead>
                       <tr>
+                        <th>PO #</th>
                         <th>Date</th>
-                        <th>Narration / Description</th>
-                        <th>Source</th>
-                        <th className="r">Amount</th>
+                        <th>Invoice #</th>
+                        <th className="r">Qty (MT)</th>
+                        <th className="r">Rate / MT</th>
+                        <th className="r">Total Amount</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {g.txns.sort((a, b) => (b.date || "").localeCompare(a.date || "")).map(t => (
-                        <tr key={t.id}>
-                          <td className="mono" style={{ fontSize: 11, color: "var(--text3)" }}>{t.date}</td>
-                          <td style={{ fontSize: 12 }}>{t.description}</td>
-                          <td><BadgeComponent type={t.source === "Bank Statement" ? "blue" : "accent"}>{t.source}</BadgeComponent></td>
-                          <td className="r mono" style={{ fontSize: 11, color: "var(--red)", fontWeight: 700 }}>{fmt(t.amount)}</td>
+                      {g.pos.sort((a, b) => (b.date || "").localeCompare(a.date || "")).map(p => (
+                        <tr key={p.id}>
+                          <td className="mono" style={{ color: "var(--accent)" }}>{p.poNo}</td>
+                          <td className="mono" style={{ fontSize: 11, color: "var(--text3)" }}>{p.date}</td>
+                          <td className="mono">{p.invoiceNo || "—"}</td>
+                          <td className="r mono">{fmtMT(p.quantityMT)}</td>
+                          <td className="r mono">₹{p.ratePerMT}</td>
+                          <td className="r mono" style={{ fontWeight: 700, color: "var(--amber)" }}>{fmt(p.totalAmount)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -1231,6 +1098,35 @@ function ExpensesView({ expenses, setExpenses, bankTxns, bankLabels }) {
           ))
         )}
       </div>
+
+      {open && (
+        <Modal title="Record Raw Material Purchase" onClose={() => setOpen(false)} foot={<><button className="btn btn-ghost" onClick={() => setOpen(false)}>Cancel</button><button className="btn btn-primary" onClick={save}>Save Purchase</button></>}>
+          <div className="form-row cols-2">
+            <FG label="Date"><input type="date" value={f.date} onChange={e => set("date")(e.target.value)} /></FG>
+            <FG label="Supplier *">
+              <select value={f.supplierId} onChange={e => set("supplierId")(e.target.value)}>
+                <option value="">Select supplier...</option>
+                {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </FG>
+          </div>
+          <div className="form-row cols-3">
+            <FG label="Quantity (MT) *"><input type="number" step="0.001" value={f.quantityMT} onChange={e => set("quantityMT")(e.target.value)} /></FG>
+            <FG label="Rate / MT (₹) *"><input type="number" value={f.ratePerMT} onChange={e => set("ratePerMT")(e.target.value)} /></FG>
+            <FG label="GST %">
+              <select value={f.gstPct} onChange={e => set("gstPct")(e.target.value)}>
+                {[0, 5, 12, 18].map(r => <option key={r} value={r}>{r}%</option>)}
+              </select>
+            </FG>
+          </div>
+          <div className="form-row">
+            <FG label="Invoice / Challan #"><input value={f.invoiceNo} onChange={e => set("invoiceNo")(e.target.value)} /></FG>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
 
       {/* PARTY STATEMENT MODAL */}
       {selectedVendorForStmt && (
