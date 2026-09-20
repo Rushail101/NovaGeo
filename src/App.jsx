@@ -559,7 +559,7 @@ export default function App() {
             {view === "purchases" && <PurchasesView {...{ suppliers, purchases, setPurchases }} />}
             {view === "opscosts" && <MonthlyOpsCostsView {...{ expenses, setExpenses }} />}
             {view === "expenses" && <ExpensesView {...{ expenses, setExpenses, bankTxns, bankLabels }} />}
-            {view === "capital" && <CapitalRegisterView {...{ capitalItems, setCapitalItems }} />}
+            {view === "capital" && <CapitalRegisterView {...{ capitalItems, setCapitalItems, bankTxns, bankLabels }} />}
             {view === "bankstatement" && <BankStatementGroupingView {...{ bankBatches, setBankBatches, bankTxns, setBankTxns, bankLabels, setBankLabels, setCapitalItems, setExpenses, setPartnerCashbook }} />}
             {view === "partners" && (
               <PartnersCapitalDashboard
@@ -1307,7 +1307,7 @@ function ExpensesView({ expenses, setExpenses, bankTxns, bankLabels }) {
   );
 }
 
-function CapitalRegisterView({ capitalItems, setCapitalItems }) {
+function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabels }) {
   const [open, setOpen] = useState(false);
   const blank = { date: today(), category: "machinery", description: "", amount: "", paidTo: "", reference: "", fundedBy: "own", paymentMode: "bank", paidByPartner: "" };
   const [f, setF] = useState(blank);
@@ -1322,11 +1322,61 @@ function CapitalRegisterView({ capitalItems, setCapitalItems }) {
     } catch (err) { alert(err.message); }
   }
 
+  // Combine manual capital items with bank statement transactions tagged as capital
+  const allCapitalRows = useMemo(() => {
+    const list = [];
+
+    // 1. Manual capital items
+    (capitalItems || []).forEach(c => {
+      if (!c) return;
+      list.push({
+        id: `manual-${c.id}`,
+        capNo: c.capNo || "CAP-M",
+        date: c.date,
+        category: c.category || "machinery",
+        description: c.description,
+        paidTo: c.paidTo || "—",
+        paymentMode: c.paymentMode || "bank",
+        fundedBy: c.fundedBy || "own",
+        amount: +c.amount || 0,
+        source: "Manual"
+      });
+    });
+
+    // 2. Bank statement debits tagged as capital assets
+    (bankTxns || []).forEach(t => {
+      if (!t || !t.debit || t.debit <= 0) return;
+      const k = t.key || t.group_key || (t.description ? normalizeDesc(t.description) : "UNKNOWN");
+      const meta = (bankLabels || {})[k] || {};
+      const type = meta.type || "unlabeled";
+
+      if (type.startsWith("capital_")) {
+        const vendorName = (meta.label && meta.label.trim()) ? meta.label.trim() : k;
+        const cat = type === "capital_land" ? "land" : "machinery";
+
+        list.push({
+          id: `bank-${t.id}`,
+          capNo: "CAP-B",
+          date: t.date || t.txn_date,
+          category: cat,
+          description: t.description,
+          paidTo: vendorName,
+          paymentMode: "bank",
+          fundedBy: "own",
+          amount: +t.debit,
+          source: "Bank Statement"
+        });
+      }
+    });
+
+    return list.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  }, [capitalItems, bankTxns, bankLabels]);
+
   const categoryTotals = useMemo(() => {
     const summary = {};
     CAP_CATS.forEach(c => { summary[c.id] = { label: c.label, total: 0, count: 0 }; });
     
-    (capitalItems || []).forEach(item => {
+    allCapitalRows.forEach(item => {
       const cat = item.category || "other";
       if (!summary[cat]) {
         summary[cat] = { label: cat.toUpperCase(), total: 0, count: 0 };
@@ -1336,9 +1386,9 @@ function CapitalRegisterView({ capitalItems, setCapitalItems }) {
     });
 
     return Object.entries(summary).filter(([, data]) => data.total > 0);
-  }, [capitalItems]);
+  }, [allCapitalRows]);
 
-  const totalCapexAll = (capitalItems || []).reduce((s, c) => s + (+c.amount || 0), 0);
+  const totalCapexAll = allCapitalRows.reduce((s, c) => s + (+c.amount || 0), 0);
 
   return (
     <div>
@@ -1367,34 +1417,30 @@ function CapitalRegisterView({ capitalItems, setCapitalItems }) {
 
       <div className="table-wrap">
         <div className="table-toolbar">
-          <h3>Asset Registry ({(capitalItems || []).length})</h3>
+          <h3>Asset Registry ({allCapitalRows.length})</h3>
         </div>
         <table>
           <thead>
             <tr>
-              <th>Cap #</th>
+              <th>Type</th>
               <th>Date</th>
               <th>Category</th>
-              <th>Asset Description</th>
-              <th>Paid To</th>
-              <th>Channel</th>
-              <th>Funding</th>
+              <th>Asset Description / Vendor</th>
+              <th>Source</th>
               <th className="r">Amount</th>
             </tr>
           </thead>
           <tbody>
-            {(capitalItems || []).length === 0 ? (
-              <tr><td colSpan={8} style={{ textAlign: "center", color: "var(--text3)", padding: 32 }}>No capital assets recorded yet. Click above to add land, machinery, or civil works.</td></tr>
+            {allCapitalRows.length === 0 ? (
+              <tr><td colSpan={6} style={{ textAlign: "center", color: "var(--text3)", padding: 32 }}>No capital assets recorded yet. Tag a bank group as Capital Asset or add manually.</td></tr>
             ) : (
-              (capitalItems || []).map(c => (
+              allCapitalRows.map(c => (
                 <tr key={c.id}>
                   <td className="mono" style={{ color: "var(--accent)" }}>{c.capNo}</td>
                   <td className="mono" style={{ fontSize: 11, color: "var(--text3)" }}>{c.date}</td>
                   <td><BadgeComponent type="teal">{c.category}</BadgeComponent></td>
-                  <td style={{ fontWeight: 600 }}>{c.description}</td>
-                  <td>{c.paidTo || "—"}</td>
-                  <td><BadgeComponent type={c.paymentMode === "cash" ? "amber" : "muted"}>{c.paymentMode}</BadgeComponent></td>
-                  <td><BadgeComponent type={c.fundedBy === "loan" ? "amber" : "green"}>{c.fundedBy}</BadgeComponent></td>
+                  <td style={{ fontWeight: 600 }}>{c.description} <span style={{ color: "var(--text3)", fontWeight: 400 }}>({c.paidTo})</span></td>
+                  <td><BadgeComponent type={c.source === "Bank Statement" ? "blue" : "accent"}>{c.source}</BadgeComponent></td>
                   <td className="r mono" style={{ color: "var(--accent)", fontWeight: 700 }}>{fmt(c.amount)}</td>
                 </tr>
               ))
@@ -1442,7 +1488,6 @@ function CapitalRegisterView({ capitalItems, setCapitalItems }) {
     </div>
   );
 }
-
 // ── BANK STATEMENT GROUPING VIEW ─────────────────────────────────────────────
 function CounterpartyNameInput({ rawKeys, currentLabel, placeholder, onSave }) {
   const [val, setVal] = useState(currentLabel || "");
