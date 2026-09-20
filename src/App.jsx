@@ -207,8 +207,6 @@ tr:hover td{background:rgba(255,255,255,.02)}
 }
 `;
 
-
-
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const SHIFTS = ["Morning (6AM–2PM)","Afternoon (2PM–10PM)","Night (10PM–6AM)"];
 const OPERATORS = ["Suresh Kumar","Manoj Singh","Ravi Patil","Dinesh Yadav"];
@@ -550,19 +548,19 @@ export default function App() {
             {view === "shift" && <ShiftLogView {...{ grades, shiftLogs, setShiftLogs }} />}
             {view === "purchases" && <PurchasesView {...{ suppliers, purchases, setPurchases }} />}
             {view === "opscosts" && <MonthlyOpsCostsView {...{ expenses, setExpenses }} />}
-            {view === "expenses" && <ExpensesView {...{ expenses, setExpenses }} />}
+            {view === "expenses" && <ExpensesView {...{ expenses, setExpenses, bankTxns, bankLabels }} />}
             {view === "capital" && <CapitalRegisterView {...{ capitalItems, setCapitalItems }} />}
             {view === "bankstatement" && <BankStatementGroupingView {...{ bankBatches, setBankBatches, bankTxns, setBankTxns, bankLabels, setBankLabels, setCapitalItems, setExpenses, setPartnerCashbook }} />}
             {view === "partners" && (
-  <PartnersCapitalDashboard
-    bankTxns={bankTxns}
-    bankLabels={bankLabels}
-    partnerCashbook={partnerCashbook}
-    setPartnerCashbook={setPartnerCashbook}
-    setExpenses={setExpenses}
-    setCapitalItems={setCapitalItems}
-  />
-)}
+              <PartnersCapitalDashboard
+                bankTxns={bankTxns}
+                bankLabels={bankLabels}
+                partnerCashbook={partnerCashbook}
+                setPartnerCashbook={setPartnerCashbook}
+                setExpenses={setExpenses}
+                setCapitalItems={setCapitalItems}
+              />
+            )}
             {view === "balancesheet" && <BalanceSheetView {...{ capitalItems, bankTxns, partnerCashbook, purchases, expenses, weighments, grades, boulderReceipts, productionEntries, costConfig }} />}
             {view === "costs" && <CostSheetView {...{ purchases, expenses, productionEntries, weighments, costConfig }} />}
             {view === "costconfig" && <CostConfigView {...{ costConfig, setCostConfig }} />}
@@ -577,7 +575,7 @@ export default function App() {
   );
 }
 
-// ── OPERATIONS VIEWS WITH RESTORED CREATION MODALS ────────────────────────────
+// ── OPERATIONS VIEWS ──────────────────────────────────────────────────────────
 
 function WeighmentsView({ vehicles, customers, grades, weighments, setWeighments }) {
   const [open, setOpen] = useState(false);
@@ -1152,12 +1150,10 @@ function CapitalRegisterView({ capitalItems, setCapitalItems }) {
   );
 }
 
-// ── 6. BANK STATEMENT GROUPING VIEW (RESTORED CLEAN CARDS) ───────────────────
-// Keeps local input state while typing so the card doesn't re-key and drop focus
+// ── BANK STATEMENT GROUPING VIEW ─────────────────────────────────────────────
 function CounterpartyNameInput({ rawKeys, currentLabel, placeholder, onSave }) {
   const [val, setVal] = useState(currentLabel || "");
 
-  // Sync if parent updates from outside
   useEffect(() => {
     setVal(currentLabel || "");
   }, [currentLabel]);
@@ -1171,7 +1167,7 @@ function CounterpartyNameInput({ rawKeys, currentLabel, placeholder, onSave }) {
   function handleKeyDown(e) {
     if (e.key === "Enter") {
       e.preventDefault();
-      e.target.blur(); // Triggers commit via onBlur
+      e.target.blur();
     }
   }
 
@@ -1456,14 +1452,12 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPa
   const [activeTab, setActiveTab] = useState("overview"); // 'overview' | 'ledger'
   const [selectedPartner, setSelectedPartner] = useState("All");
   const [openCashModal, setOpenCashModal] = useState(false);
-  const [openActionModal, setOpenActionModal] = useState(null); // { partner, type }
+  const [openActionModal, setOpenActionModal] = useState(null);
 
-  // 1. Recreate the EXACT same merged groups calculation engine as Bank Statement cards
   const bankPartnerGroups = useMemo(() => {
     const rawMap = {};
     (bankTxns || []).forEach(t => {
       if (!t) return;
-      // Key can be t.key, t.group_key, or normalized description fallback
       const k = t.key || t.group_key || (t.description ? normalizeDesc(t.description) : "UNKNOWN");
       if (!rawMap[k]) rawMap[k] = { key: k, txns: [], totalDebit: 0, totalCredit: 0 };
       rawMap[k].txns.push(t);
@@ -1477,7 +1471,6 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPa
       const type = meta.type || "unlabeled";
       const label = (meta.label || "").trim();
 
-      // Filter groups classified as Owner / Capital
       if (type === "owner" && label) {
         const mergeKey = label.toLowerCase();
         if (!merged[mergeKey]) {
@@ -1497,7 +1490,6 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPa
     return merged;
   }, [bankTxns, bankLabels]);
 
-  // 2. Discover all partner names (from Owner cards and manual cashbook entries)
   const partners = useMemo(() => {
     const s = new Set();
     Object.values(bankPartnerGroups).forEach(g => s.add(g.displayName));
@@ -1507,7 +1499,6 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPa
     return Array.from(s);
   }, [bankPartnerGroups, partnerCashbook]);
 
-  // 3. Roll up summary per partner combining bank statement movements & manual entries
   const partnerSummaries = useMemo(() => {
     return partners.map(name => {
       const bankGroup = bankPartnerGroups[name.toLowerCase()] || { totalCredit: 0, totalDebit: 0, txns: [] };
@@ -1528,22 +1519,11 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPa
         .filter(e => e.type === "Direct Cash Expense" || e.type === "Expense Reimbursement")
         .reduce((sum, e) => sum + (+e.amount || 0), 0);
 
-      // Total Capital = Bank Inward Deposits + Manual Off-Book Infusions
       const capitalInjected = bankGroup.totalCredit + manualInfusions;
-
-      // Total Drawings = Bank Withdrawals by Partner + Manual Drawings
       const drawingsTaken = bankGroup.totalDebit + manualDrawings;
-
-      // Net Standing = (Capital + Site Expenses) - Drawings
       const netStanding = (capitalInjected + cashSpentOnSite) - drawingsTaken;
 
-      return {
-        name,
-        capitalInjected,
-        cashSpentOnSite,
-        drawingsTaken,
-        netStanding,
-      };
+      return { name, capitalInjected, cashSpentOnSite, drawingsTaken, netStanding };
     }).sort((a, b) => b.capitalInjected - a.capitalInjected);
   }, [partners, bankPartnerGroups, partnerCashbook]);
 
@@ -1551,16 +1531,7 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPa
   const totalCashSpentAll = partnerSummaries.reduce((s, p) => s + p.cashSpentOnSite, 0);
   const totalDrawingsAll = partnerSummaries.reduce((s, p) => s + p.drawingsTaken, 0);
 
-  // Form state for direct site cash spend
-  const [cf, setCf] = useState({
-    partnerName: "",
-    date: today(),
-    amount: "",
-    isCapex: false,
-    category: "misc",
-    description: "",
-    ref: "",
-  });
+  const [cf, setCf] = useState({ partnerName: "", date: today(), amount: "", isCapex: false, category: "misc", description: "", ref: "" });
 
   useEffect(() => {
     if (!cf.partnerName && partners.length > 0) {
@@ -1569,13 +1540,9 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPa
   }, [partners, cf.partnerName]);
 
   async function handleDirectCashSubmit() {
-    if (!cf.partnerName || !cf.amount || !cf.description) {
-      return alert("Partner name, amount, and description are required.");
-    }
+    if (!cf.partnerName || !cf.amount || !cf.description) return alert("Partner name, amount, and description are required.");
     try {
-      const res = await db.recordPartnerDirectCashExpense(
-        cf.partnerName, cf.date, cf.category, cf.amount, cf.description, cf.ref, cf.isCapex
-      );
+      const res = await db.recordPartnerDirectCashExpense(cf.partnerName, cf.date, cf.category, cf.amount, cf.description, cf.ref, cf.isCapex);
       setPartnerCashbook(prev => [res.cashbookEntry, ...(prev || [])]);
       if (res.isCapex) setCapitalItems(prev => [res.item, ...(prev || [])]);
       else setExpenses(prev => [res.item, ...(prev || [])]);
@@ -1585,7 +1552,6 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPa
     } catch (err) { alert(err.message); }
   }
 
-  // Quick Action Modal state (Direct Infusion / Drawing)
   const [quickForm, setQuickForm] = useState({ date: today(), amount: "", remarks: "" });
   async function handleQuickActionSubmit() {
     if (!quickForm.amount) return alert("Amount is required.");
@@ -1605,11 +1571,8 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPa
     } catch (err) { alert(err.message); }
   }
 
-  // Transaction ledger rows: combines individual bank transactions for owner groups with manual cashbook records
   const ledgerRows = useMemo(() => {
     const list = [];
-
-    // Bank transactions linked to owner groups
     (bankTxns || []).forEach(t => {
       if (!t) return;
       const k = t.key || t.group_key || (t.description ? normalizeDesc(t.description) : "");
@@ -1631,9 +1594,8 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPa
       }
     });
 
-    // Off-book manual cashbook entries
     (partnerCashbook || []).forEach(e => {
-      if (!e || e.bankTxnId) return; // avoid double counting if linked to a bank txn
+      if (!e || e.bankTxnId) return;
       if (selectedPartner === "All" || (e.partnerName && e.partnerName.toLowerCase() === selectedPartner.toLowerCase())) {
         list.push({
           id: `cb-${e.id}`,
@@ -1647,7 +1609,6 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPa
         });
       }
     });
-
     return list.sort((a, b) => (b.entryDate || "").localeCompare(a.entryDate || ""));
   }, [bankTxns, bankLabels, partnerCashbook, selectedPartner]);
 
@@ -1655,17 +1616,10 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPa
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
         <div className="pill-tabs">
-          <button className={`pill-tab ${activeTab === "overview" ? "active" : ""}`} onClick={() => setActiveTab("overview")}>
-            Partner Equity & Summaries
-          </button>
-          <button className={`pill-tab ${activeTab === "ledger" ? "active" : ""}`} onClick={() => setActiveTab("ledger")}>
-            Transaction Ledger ({ledgerRows.length})
-          </button>
+          <button className={`pill-tab ${activeTab === "overview" ? "active" : ""}`} onClick={() => setActiveTab("overview")}>Partner Equity & Summaries</button>
+          <button className={`pill-tab ${activeTab === "ledger" ? "active" : ""}`} onClick={() => setActiveTab("ledger")}>Transaction Ledger ({ledgerRows.length})</button>
         </div>
-
-        <button className="btn btn-primary" onClick={() => setOpenCashModal(true)}>
-          + Record Cash Spent by Partner
-        </button>
+        <button className="btn btn-primary" onClick={() => setOpenCashModal(true)}>+ Record Cash Spent by Partner</button>
       </div>
 
       <div className="stats-grid">
@@ -1696,11 +1650,7 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPa
               {partnerSummaries.length === 0 ? (
                 <tr>
                   <td colSpan={6} style={{ textAlign: "center", color: "var(--text3)", padding: 32 }}>
-                    <EmptyState 
-                      icon="🤝" 
-                      message="No partners detected yet" 
-                      sub="Tag counterparties as 'Owner / Capital' in Bank Statement, or click '+ Record Cash Spent by Partner' above." 
-                    />
+                    <EmptyState icon="🤝" message="No partners detected yet" sub="Tag counterparties as 'Owner / Capital' in Bank Statement." />
                   </td>
                 </tr>
               ) : (
@@ -1710,23 +1660,11 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPa
                     <td className="r mono" style={{ color: "var(--accent)", fontWeight: 700 }}>{fmt(p.capitalInjected)}</td>
                     <td className="r mono" style={{ color: "var(--green)" }}>{fmt(p.cashSpentOnSite)}</td>
                     <td className="r mono" style={{ color: "var(--red)" }}>{fmt(p.drawingsTaken)}</td>
-                    <td className="r mono" style={{ fontWeight: 700, fontSize: 13, color: p.netStanding >= 0 ? "var(--teal)" : "var(--amber)" }}>
-                      {fmt(p.netStanding)}
-                    </td>
+                    <td className="r mono" style={{ fontWeight: 700, fontSize: 13, color: p.netStanding >= 0 ? "var(--teal)" : "var(--amber)" }}>{fmt(p.netStanding)}</td>
                     <td className="r">
                       <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-                        <button 
-                          className="btn btn-ghost btn-sm" 
-                          onClick={() => setOpenActionModal({ partner: p.name, type: "Capital Infusion" })}
-                        >
-                          + Capital
-                        </button>
-                        <button 
-                          className="btn btn-danger btn-sm" 
-                          onClick={() => setOpenActionModal({ partner: p.name, type: "Drawings" })}
-                        >
-                          + Draw
-                        </button>
+                        <button className="btn btn-ghost btn-sm" onClick={() => setOpenActionModal({ partner: p.name, type: "Capital Infusion" })}>+ Capital</button>
+                        <button className="btn btn-danger btn-sm" onClick={() => setOpenActionModal({ partner: p.name, type: "Drawings" })}>+ Draw</button>
                       </div>
                     </td>
                   </tr>
@@ -1760,11 +1698,7 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPa
               </thead>
               <tbody>
                 {ledgerRows.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} style={{ textAlign: "center", color: "var(--text3)", padding: 32 }}>
-                      <EmptyState icon="📖" message="No ledger transactions found" />
-                    </td>
-                  </tr>
+                  <tr><td colSpan={7} style={{ textAlign: "center", color: "var(--text3)", padding: 32 }}><EmptyState icon="📖" message="No ledger transactions found" /></td></tr>
                 ) : (
                   ledgerRows.map(e => (
                     <tr key={e.id}>
@@ -1774,9 +1708,7 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPa
                       <td><BadgeComponent type={e.type === "Drawings" ? "red" : "green"}>{e.type}</BadgeComponent></td>
                       <td style={{ fontSize: 12 }}>{e.remarks}</td>
                       <td><BadgeComponent type="muted">{e.paymentMode}</BadgeComponent></td>
-                      <td className="r mono" style={{ fontWeight: 700, color: e.type === "Drawings" ? "var(--red)" : "var(--green)" }}>
-                        {e.type === "Drawings" ? "-" : "+"}{fmt(e.amount)}
-                      </td>
+                      <td className="r mono" style={{ fontWeight: 700, color: e.type === "Drawings" ? "var(--red)" : "var(--green)" }}>{e.type === "Drawings" ? "-" : "+"}{fmt(e.amount)}</td>
                     </tr>
                   ))
                 )}
@@ -1786,32 +1718,12 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPa
         </div>
       )}
 
-      {/* MODAL 1: Direct Cash Spent on Site by Partner */}
       {openCashModal && (
-        <Modal 
-          title="Record Site Cash Expense Paid by Partner" 
-          onClose={() => setOpenCashModal(false)} 
-          foot={<><button className="btn btn-ghost" onClick={() => setOpenCashModal(false)}>Cancel</button><button className="btn btn-primary" onClick={handleDirectCashSubmit}>Save Entry</button></>}
-        >
+        <Modal title="Record Site Cash Expense Paid by Partner" onClose={() => setOpenCashModal(false)} foot={<><button className="btn btn-ghost" onClick={() => setOpenCashModal(false)}>Cancel</button><button className="btn btn-primary" onClick={handleDirectCashSubmit}>Save Entry</button></>}>
           <div className="form-row cols-2">
             <FG label="Partner Name *">
-              {partners.length > 0 ? (
-                <input 
-                  list="partner-suggestions" 
-                  value={cf.partnerName} 
-                  placeholder="Select or type partner name"
-                  onChange={e => setCf({ ...cf, partnerName: e.target.value })} 
-                />
-              ) : (
-                <input 
-                  placeholder="Enter partner name" 
-                  value={cf.partnerName} 
-                  onChange={e => setCf({ ...cf, partnerName: e.target.value })} 
-                />
-              )}
-              <datalist id="partner-suggestions">
-                {partners.map(p => <option key={p} value={p} />)}
-              </datalist>
+              <input list="partner-suggestions" value={cf.partnerName} placeholder="Select or type partner name" onChange={e => setCf({ ...cf, partnerName: e.target.value })} />
+              <datalist id="partner-suggestions">{partners.map(p => <option key={p} value={p} />)}</datalist>
             </FG>
             <FG label="Date *"><input type="date" value={cf.date} onChange={e => setCf({ ...cf, date: e.target.value })} /></FG>
           </div>
@@ -1819,8 +1731,8 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPa
             <FG label="Amount Paid (₹) *"><input type="number" value={cf.amount} onChange={e => setCf({ ...cf, amount: e.target.value })} /></FG>
             <FG label="Expense Nature">
               <select value={cf.isCapex ? "capex" : "opex"} onChange={e => setCf({ ...cf, isCapex: e.target.value === "capex" })}>
-                <option value="opex">Operational Overhead (Site Fuel, Spares, Cash Labor)</option>
-                <option value="capex">Fixed Asset / Land (Civil Work, Machinery Advance)</option>
+                <option value="opex">Operational Overhead</option>
+                <option value="capex">Fixed Asset / Land</option>
               </select>
             </FG>
           </div>
@@ -1832,34 +1744,24 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPa
             </FG>
             <FG label="Voucher / Cash Memo Ref"><input value={cf.ref} onChange={e => setCf({ ...cf, ref: e.target.value })} /></FG>
           </div>
-          <div className="form-row">
-            <FG label="Description *"><input placeholder="e.g. Paid cash for JCB land leveling or motor rewinding" value={cf.description} onChange={e => setCf({ ...cf, description: e.target.value })} /></FG>
-          </div>
+          <div className="form-row"><FG label="Description *"><input value={cf.description} onChange={e => setCf({ ...cf, description: e.target.value })} /></FG></div>
         </Modal>
       )}
 
-      {/* MODAL 2: Quick Capital Infusion or Drawing */}
       {openActionModal && (
-        <Modal 
-          title={`${openActionModal.type}: ${openActionModal.partner}`} 
-          onClose={() => setOpenActionModal(null)} 
-          foot={<><button className="btn btn-ghost" onClick={() => setOpenActionModal(null)}>Cancel</button><button className="btn btn-primary" onClick={handleQuickActionSubmit}>Record</button></>}
-        >
+        <Modal title={`${openActionModal.type}: ${openActionModal.partner}`} onClose={() => setOpenActionModal(null)} foot={<><button className="btn btn-ghost" onClick={() => setOpenActionModal(null)}>Cancel</button><button className="btn btn-primary" onClick={handleQuickActionSubmit}>Record</button></>}>
           <div className="form-row cols-2">
             <FG label="Date"><input type="date" value={quickForm.date} onChange={e => setQuickForm({ ...quickForm, date: e.target.value })} /></FG>
             <FG label="Amount (₹) *"><input type="number" value={quickForm.amount} onChange={e => setQuickForm({ ...quickForm, amount: e.target.value })} /></FG>
           </div>
-          <div className="form-row">
-            <FG label="Remarks / Purpose"><input placeholder="e.g. Cash drawings or capital injection" value={quickForm.remarks} onChange={e => setQuickForm({ ...quickForm, remarks: e.target.value })} /></FG>
-          </div>
+          <div className="form-row"><FG label="Remarks / Purpose"><input value={quickForm.remarks} onChange={e => setQuickForm({ ...quickForm, remarks: e.target.value })} /></FG></div>
         </Modal>
       )}
     </div>
   );
 }
 
-  
-// ── 8. BALANCE SHEET VIEW ─────────────────────────────────────────────────────
+// ── BALANCE SHEET VIEW ─────────────────────────────────────────────────────
 function BalanceSheetView({ capitalItems, bankTxns, partnerCashbook, purchases, expenses, weighments, grades, boulderReceipts, productionEntries, costConfig }) {
   const fixedAssets = useMemo(() => {
     return (capitalItems || []).reduce((acc, c) => {
@@ -1986,7 +1888,7 @@ function BalanceSheetView({ capitalItems, bankTxns, partnerCashbook, purchases, 
   );
 }
 
-// ── 9. COST SHEET & STANDARDS ─────────────────────────────────────────────────
+// ── COST SHEET & STANDARDS ─────────────────────────────────────────────────
 function CostSheetView({ purchases, expenses, productionEntries, weighments, costConfig }) {
   const ym = today().slice(0, 7);
   const rm = (purchases || []).filter(p => p.date?.slice(0, 7) === ym).reduce((s, p) => s + p.taxableAmount, 0);
@@ -2029,7 +1931,7 @@ function CostConfigView({ costConfig, setCostConfig }) {
   );
 }
 
-// ── 10. MASTER TABLE HELPER ───────────────────────────────────────────────────
+// ── MASTER TABLE HELPER ──────────────────────────────────────────────────────
 function MasterTableView({ title, noun, items, setItems, saveFn, delFn, fields, cols }) {
   const blank = Object.fromEntries(fields.map(f => [f.key, ""]));
   const [open, setOpen] = useState(false);
@@ -2064,7 +1966,7 @@ function MasterTableView({ title, noun, items, setItems, saveFn, delFn, fields, 
   );
 }
 
-// ── 11. DASHBOARD OVERVIEW ────────────────────────────────────────────────────
+// ── DASHBOARD OVERVIEW ────────────────────────────────────────────────────
 function DashboardView({ weighments, boulderReceipts, productionEntries, expenses, capitalItems, bankTxns, partnerCashbook }) {
   const totalCapex = (capitalItems || []).reduce((s, c) => s + (c.amount || 0), 0);
   const bankBalance = (bankTxns || []).reduce((s, t) => s + ((t.credit || 0) - (t.debit || 0)), 0);
