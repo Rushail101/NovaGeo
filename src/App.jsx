@@ -1732,9 +1732,8 @@ function BankStatementGroupingView({ bankBatches, setBankBatches, bankTxns, setB
     } catch (err) { alert(err.message); }
   }
 
-  async function updateLabel(rawKeys, patch) {
+ async function updateLabel(rawKeys, patch) {
     try {
-      // 1. Save the bank label update to the backend
       await db.updateBankLabels(rawKeys, patch);
       setBankLabels(bl => {
         const next = { ...bl };
@@ -1742,12 +1741,17 @@ function BankStatementGroupingView({ bankBatches, setBankBatches, bankTxns, setB
         return next;
       });
 
-      // 2. If categorized as a Capital Asset, permanently save each debit transaction to the backend database
       if (patch.type && patch.type.startsWith("capital_")) {
         const cat = patch.type === "capital_land" ? "land" : "machinery";
         
+        // Find existing capital descriptions to prevent duplicates
+        const existingDescriptions = new Set((capitalItems || []).map(c => `${c.description}-${c.amount}`));
+
         for (const t of bankTxns) {
           if (rawKeys.includes(t.key) && t.debit > 0) {
+            const uniqueKey = `${t.description}-${t.debit}`;
+            if (existingDescriptions.has(uniqueKey)) continue; // Skip if already added
+
             const capitalPayload = {
               date: t.date || t.txn_date,
               category: cat,
@@ -1758,12 +1762,12 @@ function BankStatementGroupingView({ bankBatches, setBankBatches, bankTxns, setB
               paymentMode: "bank",
               reference: ""
             };
-            // Permanently save to database so it reloads on refresh
             const savedItem = await db.saveCapitalItem(capitalPayload);
             setCapitalItems(cs => [savedItem, ...cs]);
+            existingDescriptions.add(uniqueKey);
           }
         }
-        alert("Counterparty mapped to Capital Assets and saved permanently!");
+        alert("Counterparty mapped to Capital Assets successfully!");
       }
     } catch (err) { alert(err.message); }
   }
