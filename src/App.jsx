@@ -935,7 +935,7 @@ function MonthlyOpsCostsView({ expenses, setExpenses }) {
   );
 }
 
-function ExpensesView({ expenses, setExpenses }) {
+function ExpensesView({ expenses, setExpenses, bankTxns, bankLabels }) {
   const [open, setOpen] = useState(false);
   const blank = { date: today(), category: "fuel", amount: "", description: "", paidTo: "", reference: "", paymentMode: "bank" };
   const [f, setF] = useState(blank);
@@ -950,72 +950,119 @@ function ExpensesView({ expenses, setExpenses }) {
     } catch (err) { alert(err.message); }
   }
 
-  // Calculate category totals dynamically
-  const categoryTotals = useMemo(() => {
-    const summary = {};
-    EXP_CATS.forEach(c => { summary[c.id] = { label: c.label, total: 0, count: 0 }; });
-    
+  // 1. Combine manual expenses with bank debit transactions
+  const allExpenseRows = useMemo(() => {
+    const list = [];
+
+    // Add manual expenses
     (expenses || []).forEach(e => {
-      const cat = e.category || "misc";
-      if (!summary[cat]) {
-        summary[cat] = { label: cat.toUpperCase(), total: 0, count: 0 };
-      }
-      summary[cat].total += (+e.amount || 0);
-      summary[cat].count += 1;
+      if (!e) return;
+      list.push({
+        id: `manual-${e.id}`,
+        date: e.date,
+        category: e.category || "misc",
+        description: e.description,
+        paidTo: e.paidTo || "—",
+        paymentMode: e.paymentMode || "bank",
+        amount: +e.amount || 0,
+        source: "Manual"
+      });
     });
 
-    return Object.entries(summary).filter(([, data]) => data.total > 0);
-  }, [expenses]);
+    // Add bank debits (payments out)
+    (bankTxns || []).forEach(t => {
+      if (!t || !t.debit || t.debit <= 0) return;
+      const k = t.key || t.group_key || (t.description ? normalizeDesc(t.description) : "UNKNOWN");
+      const meta = (bankLabels || {})[k] || {};
+      const vendorName = meta.label ? meta.label.trim() : k;
+      const cpType = meta.type || "unlabeled";
 
-  const totalExpensesAll = (expenses || []).reduce((s, e) => s + (+e.amount || 0), 0);
+      // Skip partner drawings or capital movements from operating expenses if desired, or include them as vendors
+      if (cpType === "owner") return; // Optional: keeps equity movements in Partner page
+
+      list.push({
+        id: `bank-${t.id}`,
+        date: t.date || t.txn_date,
+        category: cpType !== "unlabeled" ? cpType : "vendor / other",
+        description: t.description,
+        paidTo: vendorName,
+        paymentMode: "bank",
+        amount: +t.debit || 0,
+        source: "Bank Statement"
+      });
+    });
+
+    return list.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  }, [expenses, bankTxns, bankLabels]);
+
+  // 2. Group totals by Vendor / Paid To
+  const vendorTotals = useMemo(() => {
+    const map = {};
+    allExpenseRows.forEach(row => {
+      const v = row.paidTo || "Unknown Vendor";
+      if (!map[v]) map[v] = { vendor: v, total: 0, count: 0 };
+      map[v].total += row.amount;
+      map[v].count += 1;
+    });
+    return Object.values(map).sort((a, b) => b.total - a.total);
+  }, [allExpenseRows]);
+
+  const totalSpendAll = allExpenseRows.reduce((s, r) => s + r.amount, 0);
 
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
         <div>
-          <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>Operating Expenses Overview</h3>
-          <p style={{ fontSize: 12, color: "var(--text3)" }}>Total Spend: <strong style={{ color: "var(--red)" }}>{fmt(totalExpensesAll)}</strong></p>
+          <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>Operating Expenses & Vendor Payments</h3>
+          <p style={{ fontSize: 12, color: "var(--text3)" }}>Total Combined Spend: <strong style={{ color: "var(--red)" }}>{fmt(totalSpendAll)}</strong></p>
         </div>
         <button className="btn btn-primary" onClick={() => setOpen(true)}>+ Add Expense Entry</button>
       </div>
 
-      {/* Category Breakdown Cards */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10, marginBottom: 20 }}>
-        {categoryTotals.map(([catId, data]) => (
-          <div key={catId} className="stat-card red" style={{ padding: "12px 16px" }}>
-            <div className="stat-label">{data.label}</div>
-            <div className="stat-val red" style={{ fontSize: "18px" }}>{fmt(data.total)}</div>
-            <div className="stat-sub">{data.count} transaction(s)</div>
+      {/* Vendor Breakdown Summary Cards */}
+      {vendorTotals.length > 0 && (
+        <div style={{ marginBottom: 20 }}>
+          <div style={{ fontSize: 11, color: "var(--text3)", textTransform: "uppercase", fontFamily: "var(--mono)", marginBottom: 8 }}>Totals by Vendor / Counterparty</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+            {vendorTotals.slice(0, 8).map(v => (
+              <div key={v.vendor} className="stat-card red" style={{ padding: "12px 16px" }}>
+                <div className="stat-label" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v.vendor}</div>
+                <div className="stat-val red" style={{ fontSize: "18px" }}>{fmt(v.total)}</div>
+                <div className="stat-sub">{v.count} payment(s) made</div>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
+        </div>
+      )}
 
+      {/* Detailed Transaction Table */}
       <div className="table-wrap">
+        <div className="table-toolbar">
+          <h3>All Expense & Payment Transactions ({allExpenseRows.length})</h3>
+        </div>
         <table>
           <thead>
             <tr>
-              <th>Exp #</th>
               <th>Date</th>
-              <th>Category</th>
-              <th>Description</th>
-              <th>Paid To</th>
-              <th>Channel</th>
-              <th className="r">Amount</th>
+              <th>Paid To / Vendor</th>
+              <th>Category / Type</th>
+              <th>Narration / Description</th>
+              <th>Source</th>
+              <th className="r">Amount Paid</th>
             </tr>
           </thead>
           <tbody>
-            {(expenses || []).length === 0 ? (
-              <tr><td colSpan={7} style={{ textAlign: "center", color: "var(--text3)", padding: 24 }}>No expenses recorded yet</td></tr>
+            {allExpenseRows.length === 0 ? (
+              <tr><td colSpan={6} style={{ textAlign: "center", color: "var(--text3)", padding: 32 }}>No expenses or bank debits found. Import a statement or add an expense.</td></tr>
             ) : (
-              (expenses || []).map(e => (
-                <tr key={e.id}>
-                  <td className="mono" style={{ color: "var(--accent)" }}>{e.expNo}</td>
-                  <td className="mono">{e.date}</td>
-                  <td><BadgeComponent type="muted">{e.category}</BadgeComponent></td>
-                  <td>{e.description}</td>
-                  <td>{e.paidTo || "—"}</td>
-                  <td><BadgeComponent type={e.paymentMode === "cash" ? "amber" : "muted"}>{e.paymentMode}</BadgeComponent></td>
-                  <td className="r mono" style={{ color: "var(--red)", fontWeight: 700 }}>{fmt(e.amount)}</td>
+              allExpenseRows.map(r => (
+                <tr key={r.id}>
+                  <td className="mono" style={{ fontSize: 11, color: "var(--text3)" }}>{r.date}</td>
+                  <td style={{ fontWeight: 600 }}>{r.paidTo}</td>
+                  <td><BadgeComponent type="muted">{r.category}</BadgeComponent></td>
+                  <td style={{ fontSize: 12 }}>{r.description}</td>
+                  <td><BadgeComponent type={r.source === "Bank Statement" ? "blue" : "accent"}>{r.source}</BadgeComponent></td>
+                  <td className="r mono" style={{ color: "var(--red)", fontWeight: 700 }}>{fmt(r.amount)}</td>
                 </tr>
               ))
             )}
@@ -1044,7 +1091,7 @@ function ExpensesView({ expenses, setExpenses }) {
           </div>
           <div className="form-row"><FG label="Description"><input value={f.description} onChange={e => set("description")(e.target.value)} /></FG></div>
           <div className="form-row cols-2">
-            <FG label="Paid To"><input value={f.paidTo} onChange={e => set("paidTo")(e.target.value)} /></FG>
+            <FG label="Paid To (Vendor)"><input value={f.paidTo} onChange={e => set("paidTo")(e.target.value)} /></FG>
             <FG label="Bill / Voucher Ref"><input value={f.reference} onChange={e => set("reference")(e.target.value)} /></FG>
           </div>
         </Modal>
