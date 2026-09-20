@@ -950,7 +950,7 @@ function ExpensesView({ expenses, setExpenses, bankTxns, bankLabels }) {
     } catch (err) { alert(err.message); }
   }
 
-  // 1. Combine manual expenses with bank debit transactions
+  // 1. Group bank transactions using the exact same logic as Bank Statement cards
   const allExpenseRows = useMemo(() => {
     const list = [];
 
@@ -969,21 +969,23 @@ function ExpensesView({ expenses, setExpenses, bankTxns, bankLabels }) {
       });
     });
 
-    // Add bank debits (payments out)
+    // Add bank debits (payments out) mapped through bankLabels
     (bankTxns || []).forEach(t => {
       if (!t || !t.debit || t.debit <= 0) return;
       const k = t.key || t.group_key || (t.description ? normalizeDesc(t.description) : "UNKNOWN");
       const meta = (bankLabels || {})[k] || {};
-      const vendorName = meta.label ? meta.label.trim() : k;
+      
+      // Use the custom user-typed label if available, otherwise fallback to raw key
+      const vendorName = (meta.label && meta.label.trim()) ? meta.label.trim() : k;
       const cpType = meta.type || "unlabeled";
 
-      // Skip partner drawings or capital movements from operating expenses if desired, or include them as vendors
-      if (cpType === "owner") return; // Optional: keeps equity movements in Partner page
+      // Skip owner withdrawals/capital from operating vendor expenses
+      if (cpType === "owner") return;
 
       list.push({
         id: `bank-${t.id}`,
         date: t.date || t.txn_date,
-        category: cpType !== "unlabeled" ? cpType : "vendor / other",
+        category: cpType !== "unlabeled" ? cpType : "vendor",
         description: t.description,
         paidTo: vendorName,
         paymentMode: "bank",
