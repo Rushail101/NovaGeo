@@ -391,11 +391,12 @@ const NAV = [
   { id:"weighment", label:"Weighment", icon:"⚖", group:"Operations" },
   { id:"boulder", label:"Boulder In", icon:"⬡", group:"Operations" },
   { id:"production", label:"Production", icon:"⚙", group:"Operations" },
+  { id:"reconciliation", label:"Plant Reconciliation", icon:"📊", group:"Operations" },
   { id:"stock", label:"Stock Ledger", icon:"▤", group:"Operations" },
   { id:"shift", label:"Shift Log", icon:"◷", group:"Operations" },
   { id:"purchases", label:"Purchases", icon:"📥", group:"Commercial" },
   { id:"opscosts", label:"Monthly Ops Costs", icon:"🧾", group:"Commercial" },
-  { id:"expenses", label:"Expenses", icon:"💸", group:"Commercial" },
+  { id:"expenses", label:"Expenses & Vendor Ledger", icon:"💸", group:"Commercial" },
   { id:"capital", label:"Capital & Infra", icon:"🏗", group:"Commercial" },
   { id:"bankstatement", label:"Bank Statement", icon:"🏦", group:"Banking" },
   { id: "partners", label: "Partners & Capital", icon: "🤝", group: "Banking" },
@@ -467,6 +468,7 @@ export default function App() {
   const [qcTests, setQcTests] = useState([]);
   const [samples, setSamples] = useState([]);
   const [partnerCashbook, setPartnerCashbook] = useState([]);
+  const [reconciliations, setReconciliations] = useState([]);
 
   useEffect(() => {
     async function init() {
@@ -480,6 +482,7 @@ export default function App() {
         setBankBatches(d.bankBatches || []); setBankTxns(d.bankTxns || []); setBankLabels(d.bankLabels || {});
         setCostConfig(d.costConfig || {}); setQcTests(d.qcTests || []); setSamples(d.samples || []);
         setPartnerCashbook(d.partnerCashbook || []);
+        setReconciliations(d.reconciliations || []);
       } catch (err) {
         console.error("Database sync failed:", err);
       } finally {
@@ -540,10 +543,11 @@ export default function App() {
           </div>
 
           <div className="content">
-            {view === "dashboard" && <DashboardView {...{ weighments, boulderReceipts, productionEntries, expenses, capitalItems, bankTxns, partnerCashbook }} />}
+            {view === "dashboard" && <DashboardView {...{ weighments, boulderReceipts, productionEntries, expenses, capitalItems, bankTxns, partnerCashbook, grades }} />}
             {view === "weighment" && <WeighmentsView {...{ vehicles, customers, grades, weighments, setWeighments }} />}
             {view === "boulder" && <BoulderInView {...{ suppliers, vehicles, boulderReceipts, setBoulderReceipts }} />}
             {view === "production" && <ProductionView {...{ grades, productionEntries, setProductionEntries, lots, setLots }} />}
+            {view === "reconciliation" && <PlantReconciliationView {...{ reconciliations, setReconciliations, boulderReceipts, productionEntries }} />}
             {view === "stock" && <StockLedgerView {...{ grades, boulderReceipts, productionEntries, weighments }} />}
             {view === "shift" && <ShiftLogView {...{ grades, shiftLogs, setShiftLogs }} />}
             {view === "purchases" && <PurchasesView {...{ suppliers, purchases, setPurchases }} />}
@@ -767,6 +771,115 @@ function ProductionView({ grades, productionEntries, setProductionEntries, lots,
   );
 }
 
+// ── NEW: Daily Plant Reconciliation (Mass Balance) View ───────────────────────
+function PlantReconciliationView({ reconciliations, setReconciliations, boulderReceipts, productionEntries }) {
+  const [open, setOpen] = useState(false);
+  const blank = { date: today(), openingStockMT: "", boulderFedMT: "", finishedProducedMT: "", estimatedLossMT: "", remarks: "" };
+  const [f, setF] = useState(blank);
+  const set = k => v => setF(x => ({ ...x, [k]: v }));
+
+  async function save() {
+    if (!f.date || !f.boulderFedMT || !f.finishedProducedMT) return alert("Date, boulder fed, and finished produced quantities required.");
+    try {
+      const fed = +f.boulderFedMT || 0;
+      const produced = +f.finishedProducedMT || 0;
+      const loss = +f.estimatedLossMT || 0;
+      const recoveryPct = fed > 0 ? ((produced / fed) * 100).toFixed(1) : 0;
+      
+      const payload = {
+        date: f.date,
+        openingStockMT: +f.openingStockMT || 0,
+        boulderFedMT: fed,
+        finishedProducedMT: produced,
+        estimatedLossMT: loss,
+        recoveryPct: +recoveryPct,
+        remarks: f.remarks
+      };
+
+      const row = await db.saveReconciliation ? await db.saveReconciliation(payload) : { id: Date.now(), ...payload };
+      setReconciliations(rs => [row, ...rs]);
+      setOpen(false); setF(blank);
+    } catch (err) { alert(err.message); }
+  }
+
+  const totalFed = (reconciliations || []).reduce((s, r) => s + (+r.boulderFedMT || 0), 0);
+  const totalProduced = (reconciliations || []).reduce((s, r) => s + (+r.finishedProducedMT || 0), 0);
+  const avgRecovery = reconciliations.length > 0 ? (reconciliations.reduce((s, r) => s + (+r.recoveryPct || 0), 0) / reconciliations.length).toFixed(1) : 0;
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
+        <div>
+          <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>Daily Plant Mass Balance & Recovery</h3>
+          <p style={{ fontSize: 12, color: "var(--text3)" }}>Average Plant Recovery Efficiency: <strong style={{ color: "var(--teal)" }}>{avgRecovery}%</strong></p>
+        </div>
+        <button className="btn btn-primary" onClick={() => setOpen(true)}>+ Log Daily Mass Balance</button>
+      </div>
+
+      <div className="stats-grid">
+        <StatCard label="Total Boulders Fed" value={fmtMT(totalFed)} color="blue" sub="Input Material" />
+        <StatCard label="Total Output Produced" value={fmtMT(totalProduced)} color="teal" sub="Finished Graded Output" />
+        <StatCard label="Overall Recovery" value={`${avgRecovery}%`} color="green" sub="Mass Balance Efficiency" />
+        <StatCard label="Logged Days" value={reconciliations.length} color="purple" sub="Reconciliation entries" />
+      </div>
+
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th className="r">Opening Stock</th>
+              <th className="r">Boulder Fed</th>
+              <th className="r">Finished Output</th>
+              <th className="r">Process Loss</th>
+              <th className="r">Recovery %</th>
+              <th>Remarks</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(reconciliations || []).length === 0 ? (
+              <tr><td colSpan={7} style={{ textAlign: "center", color: "var(--text3)", padding: 32 }}>No daily reconciliation logs recorded yet. Click above to log mass balance.</td></tr>
+            ) : (
+              (reconciliations || []).map(r => (
+                <tr key={r.id}>
+                  <td className="mono">{r.date}</td>
+                  <td className="r mono">{fmtMT(r.openingStockMT)}</td>
+                  <td className="r mono" style={{ color: "var(--blue)" }}>{fmtMT(r.boulderFedMT)}</td>
+                  <td className="r mono" style={{ color: "var(--teal)", fontWeight: 700 }}>{fmtMT(r.finishedProducedMT)}</td>
+                  <td className="r mono" style={{ color: "var(--amber)" }}>{fmtMT(r.estimatedLossMT)}</td>
+                  <td className="r">
+                    <BadgeComponent type={r.recoveryPct >= 90 ? "green" : r.recoveryPct >= 80 ? "amber" : "red"}>
+                      {r.recoveryPct}%
+                    </BadgeComponent>
+                  </td>
+                  <td style={{ fontSize: 12 }}>{r.remarks || "—"}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {open && (
+        <Modal title="Log Daily Plant Reconciliation (Mass Balance)" onClose={() => setOpen(false)} foot={<><button className="btn btn-ghost" onClick={() => setOpen(false)}>Cancel</button><button className="btn btn-primary" onClick={save}>Save Log</button></>}>
+          <div className="form-row cols-2">
+            <FG label="Date *"><input type="date" value={f.date} onChange={e => set("date")(e.target.value)} /></FG>
+            <FG label="Opening Stock (MT)"><input type="number" step="0.001" value={f.openingStockMT} onChange={e => set("openingStockMT")(e.target.value)} /></FG>
+          </div>
+          <div className="form-row cols-2">
+            <FG label="Raw Boulder Fed (MT) *"><input type="number" step="0.001" value={f.boulderFedMT} onChange={e => set("boulderFedMT")(e.target.value)} /></FG>
+            <FG label="Finished Output Produced (MT) *"><input type="number" step="0.001" value={f.finishedProducedMT} onChange={e => set("finishedProducedMT")(e.target.value)} /></FG>
+          </div>
+          <div className="form-row cols-2">
+            <FG label="Estimated Process Loss / Dust (MT)"><input type="number" step="0.001" value={f.estimatedLossMT} onChange={e => set("estimatedLossMT")(e.target.value)} /></FG>
+            <FG label="Remarks / Notes"><input placeholder="e.g. Normal shift throughput" value={f.remarks} onChange={e => set("remarks")(e.target.value)} /></FG>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
 function ShiftLogView({ grades, shiftLogs, setShiftLogs }) {
   const [open, setOpen] = useState(false);
   const blank = { date:today(), shift:SHIFTS[0], operator:OPERATORS[0], machineStatus:"Running", boulderFed:"", production:[{ gradeId:grades[0]?.id||"", quantity:"" }], breakdowns:"", remarks:"" };
@@ -937,6 +1050,7 @@ function ExpensesView({ expenses, setExpenses, bankTxns, bankLabels }) {
   const [open, setOpen] = useState(false);
   const [expandedGroup, setExpandedGroup] = useState(null);
   const [search, setSearch] = useState("");
+  const [selectedVendorForStmt, setSelectedVendorForStmt] = useState(null);
   
   const blank = { date: today(), category: "fuel", amount: "", description: "", paidTo: "", reference: "", paymentMode: "bank", totalDue: "" };
   const [f, setF] = useState(blank);
@@ -951,11 +1065,9 @@ function ExpensesView({ expenses, setExpenses, bankTxns, bankLabels }) {
     } catch (err) { alert(err.message); }
   }
 
-  // 1. Build grouped vendor cards from bank debits + manual expenses
   const expenseGroups = useMemo(() => {
     const map = {};
 
-    // Process bank statement debit transactions mapped through bankLabels
     (bankTxns || []).forEach(t => {
       if (!t || !t.debit || t.debit <= 0) return;
       const k = t.key || t.group_key || (t.description ? normalizeDesc(t.description) : "UNKNOWN");
@@ -963,7 +1075,7 @@ function ExpensesView({ expenses, setExpenses, bankTxns, bankLabels }) {
       const vendorName = (meta.label && meta.label.trim()) ? meta.label.trim() : k;
       const cpType = meta.type || "unlabeled";
 
-      if (cpType === "owner") return; // Skip partner capital/drawings
+      if (cpType === "owner") return;
 
       const groupKey = vendorName.toLowerCase();
       if (!map[groupKey]) {
@@ -986,7 +1098,6 @@ function ExpensesView({ expenses, setExpenses, bankTxns, bankLabels }) {
       });
     });
 
-    // Process manual expenses & invoice liabilities
     (expenses || []).forEach(e => {
       if (!e) return;
       const vendorName = e.paidTo || e.description || "General Expense";
@@ -1076,9 +1187,14 @@ function ExpensesView({ expenses, setExpenses, bankTxns, bankLabels }) {
                 <span style={{ fontSize: 11, color: "var(--text3)", fontFamily: "var(--mono)" }}>
                   Category: {g.type}
                 </span>
-                <button className="btn btn-ghost btn-sm" onClick={() => setExpandedGroup(x => x === g.groupKey ? null : g.groupKey)}>
-                  {expandedGroup === g.groupKey ? "Hide" : "View"} transactions ({g.txns.length})
-                </button>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button className="btn btn-info btn-sm" onClick={() => setSelectedVendorForStmt(g)}>
+                    📄 Party Statement
+                  </button>
+                  <button className="btn btn-ghost btn-sm" onClick={() => setExpandedGroup(x => x === g.groupKey ? null : g.groupKey)}>
+                    {expandedGroup === g.groupKey ? "Hide" : "View"} transactions ({g.txns.length})
+                  </button>
+                </div>
               </div>
 
               {expandedGroup === g.groupKey && (
@@ -1109,6 +1225,50 @@ function ExpensesView({ expenses, setExpenses, bankTxns, bankLabels }) {
           ))
         )}
       </div>
+
+      {/* PARTY STATEMENT MODAL */}
+      {selectedVendorForStmt && (
+        <Modal 
+          title={`Statement of Account: ${selectedVendorForStmt.vendorName}`} 
+          size="modal-lg" 
+          onClose={() => setSelectedVendorForStmt(null)} 
+          foot={
+            <div style={{ display: "flex", gap: 8 }}>
+              <button className="btn btn-ghost" onClick={() => window.print()}>🖨 Print / Export PDF</button>
+              <button className="btn btn-primary" onClick={() => alert("Statement link ready to share via WhatsApp!")}>💬 Share via WhatsApp</button>
+            </div>
+          }
+        >
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ display: "flex", gap: 20, fontFamily: "var(--mono)", fontSize: 13, background: "var(--bg3)", padding: 12, borderRadius: "var(--r)" }}>
+              <div>Total Disbursed: <span style={{ color: "var(--red)", fontWeight: 700 }}>{fmt(selectedVendorForStmt.totalPaid)}</span></div>
+              <div>Pending Due: <span style={{ color: "var(--amber)", fontWeight: 700 }}>{fmt(selectedVendorForStmt.totalDue)}</span></div>
+            </div>
+          </div>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Description</th>
+                  <th>Source</th>
+                  <th className="r">Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {selectedVendorForStmt.txns.map(t => (
+                  <tr key={t.id}>
+                    <td className="mono">{t.date}</td>
+                    <td>{t.description}</td>
+                    <td><BadgeComponent type="muted">{t.source}</BadgeComponent></td>
+                    <td className="r mono" style={{ fontWeight: 700 }}>{fmt(t.amount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Modal>
+      )}
 
       {open && (
         <Modal title="Record Expense / Vendor Invoice Due" onClose={() => setOpen(false)} foot={<><button className="btn btn-ghost" onClick={() => setOpen(false)}>Cancel</button><button className="btn btn-primary" onClick={save}>Save Entry</button></>}>
@@ -1143,7 +1303,7 @@ function ExpensesView({ expenses, setExpenses, bankTxns, bankLabels }) {
 
 function CapitalRegisterView({ capitalItems, setCapitalItems }) {
   const [open, setOpen] = useState(false);
-  const blank = { date:today(), category:"land", description:"", amount:"", paidTo:"", reference:"", fundedBy:"own", paymentMode:"cash", paidByPartner:"" };
+  const blank = { date: today(), category: "machinery", description: "", amount: "", paidTo: "", reference: "", fundedBy: "own", paymentMode: "bank", paidByPartner: "" };
   const [f, setF] = useState(blank);
   const set = k => v => setF(x => ({ ...x, [k]: v }));
 
@@ -1156,35 +1316,121 @@ function CapitalRegisterView({ capitalItems, setCapitalItems }) {
     } catch (err) { alert(err.message); }
   }
 
+  const categoryTotals = useMemo(() => {
+    const summary = {};
+    CAP_CATS.forEach(c => { summary[c.id] = { label: c.label, total: 0, count: 0 }; });
+    
+    (capitalItems || []).forEach(item => {
+      const cat = item.category || "other";
+      if (!summary[cat]) {
+        summary[cat] = { label: cat.toUpperCase(), total: 0, count: 0 };
+      }
+      summary[cat].total += (+item.amount || 0);
+      summary[cat].count += 1;
+    });
+
+    return Object.entries(summary).filter(([, data]) => data.total > 0);
+  }, [capitalItems]);
+
+  const totalCapexAll = (capitalItems || []).reduce((s, c) => s + (+c.amount || 0), 0);
+
   return (
     <div>
-      <div className="filter-bar"><button className="btn btn-primary" onClick={() => setOpen(true)}>+ Add Fixed Asset (Land, Cash Capex, Plant)</button></div>
-      <div className="table-wrap">
-        <table>
-          <thead><tr><th>Cap #</th><th>Date</th><th>Category</th><th>Description</th><th>Channel</th><th>Funded By</th><th className="r">Amount</th></tr></thead>
-          <tbody>
-            {capitalItems.map(c => (
-              <tr key={c.id}>
-                <td className="mono" style={{ color:"var(--accent)" }}>{c.capNo}</td>
-                <td className="mono">{c.date}</td>
-                <td><BadgeComponent type="muted">{c.category}</BadgeComponent></td>
-                <td style={{ fontWeight: 500 }}>{c.description}</td>
-                <td><BadgeComponent type={c.paymentMode === "cash" ? "amber" : "muted"}>{c.paymentMode}</BadgeComponent></td>
-                <td><BadgeComponent type={c.fundedBy === "loan" ? "amber" : "green"}>{c.fundedBy}</BadgeComponent></td>
-                <td className="r mono" style={{ color:"var(--accent)", fontWeight: 700 }}>₹{c.amount.toLocaleString()}</td>
-              </tr>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
+        <div>
+          <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>Capital & Infrastructure Assets (Capex)</h3>
+          <p style={{ fontSize: 12, color: "var(--text3)" }}>Total Capital Invested: <strong style={{ color: "var(--accent)" }}>{fmt(totalCapexAll)}</strong></p>
+        </div>
+        <button className="btn btn-primary" onClick={() => setOpen(true)}>+ Add Fixed Asset (Land, Machinery, Civil)</button>
+      </div>
+
+      {categoryTotals.length > 0 && (
+        <div style={{ marginBottom: 20 }}>
+          <div style={{ fontSize: 11, color: "var(--text3)", textTransform: "uppercase", fontFamily: "var(--mono)", marginBottom: 8 }}>Asset Block Breakdown</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+            {categoryTotals.map(([catId, data]) => (
+              <div key={catId} className="stat-card teal" style={{ padding: "12px 16px" }}>
+                <div className="stat-label">{data.label}</div>
+                <div className="stat-val teal" style={{ fontSize: "18px" }}>{fmt(data.total)}</div>
+                <div className="stat-sub">{data.count} asset item(s)</div>
+              </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      <div className="table-wrap">
+        <div className="table-toolbar">
+          <h3>Asset Registry ({(capitalItems || []).length})</h3>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Cap #</th>
+              <th>Date</th>
+              <th>Category</th>
+              <th>Asset Description</th>
+              <th>Paid To</th>
+              <th>Channel</th>
+              <th>Funding</th>
+              <th className="r">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(capitalItems || []).length === 0 ? (
+              <tr><td colSpan={8} style={{ textAlign: "center", color: "var(--text3)", padding: 32 }}>No capital assets recorded yet. Click above to add land, machinery, or civil works.</td></tr>
+            ) : (
+              (capitalItems || []).map(c => (
+                <tr key={c.id}>
+                  <td className="mono" style={{ color: "var(--accent)" }}>{c.capNo}</td>
+                  <td className="mono" style={{ fontSize: 11, color: "var(--text3)" }}>{c.date}</td>
+                  <td><BadgeComponent type="teal">{c.category}</BadgeComponent></td>
+                  <td style={{ fontWeight: 600 }}>{c.description}</td>
+                  <td>{c.paidTo || "—"}</td>
+                  <td><BadgeComponent type={c.paymentMode === "cash" ? "amber" : "muted"}>{c.paymentMode}</BadgeComponent></td>
+                  <td><BadgeComponent type={c.fundedBy === "loan" ? "amber" : "green"}>{c.fundedBy}</BadgeComponent></td>
+                  <td className="r mono" style={{ color: "var(--accent)", fontWeight: 700 }}>{fmt(c.amount)}</td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>
 
       {open && (
         <Modal title="Record Capital / Land / Plant Asset" onClose={() => setOpen(false)} foot={<><button className="btn btn-ghost" onClick={() => setOpen(false)}>Cancel</button><button className="btn btn-primary" onClick={save}>Save Asset</button></>}>
-          <div className="form-row cols-2"><FG label="Acquisition Date"><input type="date" value={f.date} onChange={e => set("date")(e.target.value)} /></FG><FG label="Asset Category"><select value={f.category} onChange={e => set("category")(e.target.value)}>{CAP_CATS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</select></FG></div>
-          <div className="form-row cols-2"><FG label="Total Cost / Value (₹)"><input type="number" value={f.amount} onChange={e => set("amount")(e.target.value)} /></FG><FG label="Payment Method"><select value={f.paymentMode} onChange={e => set("paymentMode")(e.target.value)}><option value="cash">Direct Cash / Off-Book</option><option value="bank">Company Bank Account</option><option value="partner_personal">Partner Personal Account</option></select></FG></div>
-          <div className="form-row cols-2"><FG label="Financing Source"><select value={f.fundedBy} onChange={e => set("fundedBy")(e.target.value)}><option value="own">Partner Equity</option><option value="loan">Bank / Equipment Loan</option></select></FG><FG label="Paid By Partner (Optional)"><input placeholder="Partner Name" value={f.paidByPartner} onChange={e => set("paidByPartner")(e.target.value)} /></FG></div>
-          <div className="form-row"><FG label="Asset Description"><input placeholder="e.g. Land Plot Registry (Peddapur) or Machinery Advance" value={f.description} onChange={e => set("description")(e.target.value)} /></FG></div>
-          <div className="form-row cols-2"><FG label="Paid To"><input value={f.paidTo} onChange={e => set("paidTo")(e.target.value)} /></FG><FG label="Registry / Deed / Invoice Ref"><input value={f.reference} onChange={e => set("reference")(e.target.value)} /></FG></div>
+          <div className="form-row cols-2">
+            <FG label="Acquisition Date"><input type="date" value={f.date} onChange={e => set("date")(e.target.value)} /></FG>
+            <FG label="Asset Category">
+              <select value={f.category} onChange={e => set("category")(e.target.value)}>
+                {CAP_CATS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+              </select>
+            </FG>
+          </div>
+          <div className="form-row cols-2">
+            <FG label="Total Cost / Value (₹) *"><input type="number" value={f.amount} onChange={e => set("amount")(e.target.value)} /></FG>
+            <FG label="Payment Method">
+              <select value={f.paymentMode} onChange={e => set("paymentMode")(e.target.value)}>
+                <option value="bank">Company Bank Account</option>
+                <option value="cash">Direct Cash / Off-Book</option>
+                <option value="partner_personal">Partner Personal Account</option>
+              </select>
+            </FG>
+          </div>
+          <div className="form-row cols-2">
+            <FG label="Financing Source">
+              <select value={f.fundedBy} onChange={e => set("fundedBy")(e.target.value)}>
+                <option value="own">Partner Equity</option>
+                <option value="loan">Bank / Equipment Loan</option>
+              </select>
+            </FG>
+            <FG label="Paid By Partner (Optional)"><input placeholder="Partner Name" value={f.paidByPartner} onChange={e => set("paidByPartner")(e.target.value)} /></FG>
+          </div>
+          <div className="form-row"><FG label="Asset Description *"><input placeholder="e.g. Land Plot Registry (Peddapur) or Ball Mill Machinery Advance" value={f.description} onChange={e => set("description")(e.target.value)} /></FG></div>
+          <div className="form-row cols-2">
+            <FG label="Paid To"><input value={f.paidTo} onChange={e => set("paidTo")(e.target.value)} /></FG>
+            <FG label="Registry / Deed / Invoice Ref"><input value={f.reference} onChange={e => set("reference")(e.target.value)} /></FG>
+          </div>
         </Modal>
       )}
     </div>
@@ -1306,7 +1552,7 @@ function BankStatementGroupingView({ bankBatches, setBankBatches, bankTxns, setB
     try {
       const item = await db.promoteTxnToCapital(t, "machinery", "own");
       setCapitalItems(cs => [item, ...cs]);
-      alert(`Promoted ${fmt(t.debit)} to Fixed Assets!`);
+      alert(`Promoted ${fmt(t.debit)} to Capital Assets!`);
     } catch (err) { alert(err.message); }
   }
 
@@ -1465,7 +1711,7 @@ function BankStatementGroupingView({ bankBatches, setBankBatches, bankTxns, setB
                                 )}
                                 {t.debit > 0 && (
                                   <>
-                                    <button className="btn btn-ghost btn-sm" title="Promote to Fixed Assets" onClick={() => promoteToCapital(t)}>+ Cap</button>
+                                    <button className="btn btn-ghost btn-sm" title="Promote to Capital Assets" onClick={() => promoteToCapital(t)}>+ Cap</button>
                                     <button className="btn btn-ghost btn-sm" title="Promote to Expenses" onClick={() => promoteToExpense(t)}>+ Exp</button>
                                     {g.type === "owner" && (
                                       <button className="btn btn-danger btn-sm" title="Log Drawing" onClick={() => logCashbook(t, g.label || g.key, "Drawings", "current")}>+ Draw</button>
@@ -1490,10 +1736,11 @@ function BankStatementGroupingView({ bankBatches, setBankBatches, bankTxns, setB
 }
 
 function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPartnerCashbook, setExpenses, setCapitalItems }) {
-  const [activeTab, setActiveTab] = useState("overview"); // 'overview' | 'ledger'
+  const [activeTab, setActiveTab] = useState("overview");
   const [selectedPartner, setSelectedPartner] = useState("All");
   const [openCashModal, setOpenCashModal] = useState(false);
   const [openActionModal, setOpenActionModal] = useState(null);
+  const [selectedPartnerForStmt, setSelectedPartnerForStmt] = useState(null);
 
   const bankPartnerGroups = useMemo(() => {
     const rawMap = {};
@@ -1704,6 +1951,7 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPa
                     <td className="r mono" style={{ fontWeight: 700, fontSize: 13, color: p.netStanding >= 0 ? "var(--teal)" : "var(--amber)" }}>{fmt(p.netStanding)}</td>
                     <td className="r">
                       <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                        <button className="btn btn-info btn-sm" onClick={() => setSelectedPartnerForStmt(p)}>📄 Statement</button>
                         <button className="btn btn-ghost btn-sm" onClick={() => setOpenActionModal({ partner: p.name, type: "Capital Infusion" })}>+ Capital</button>
                         <button className="btn btn-danger btn-sm" onClick={() => setOpenActionModal({ partner: p.name, type: "Drawings" })}>+ Draw</button>
                       </div>
@@ -1757,6 +2005,50 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPa
             </table>
           </div>
         </div>
+      )}
+
+      {/* PARTNER STATEMENT MODAL */}
+      {selectedPartnerForStmt && (
+        <Modal 
+          title={`Partner Capital Account: ${selectedPartnerForStmt.name}`} 
+          size="modal-lg" 
+          onClose={() => setSelectedPartnerForStmt(null)} 
+          foot={
+            <div style={{ display: "flex", gap: 8 }}>
+              <button className="btn btn-ghost" onClick={() => window.print()}>🖨 Print / Export PDF</button>
+              <button className="btn btn-primary" onClick={() => alert("Partner statement ready to share via WhatsApp!")}>💬 Share via WhatsApp</button>
+            </div>
+          }
+        >
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ display: "flex", gap: 16, fontFamily: "var(--mono)", fontSize: 12.5, background: "var(--bg3)", padding: 12, borderRadius: "var(--r)", flexWrap: "wrap" }}>
+              <div>Capital Injected: <span style={{ color: "var(--accent)", fontWeight: 700 }}>{fmt(selectedPartnerForStmt.capitalInjected)}</span></div>
+              <div>Site Cash Spent: <span style={{ color: "var(--green)", fontWeight: 700 }}>{fmt(selectedPartnerForStmt.cashSpentOnSite)}</span></div>
+              <div>Drawings: <span style={{ color: "var(--red)", fontWeight: 700 }}>{fmt(selectedPartnerForStmt.drawingsTaken)}</span></div>
+              <div>Net Standing: <span style={{ color: "var(--teal)", fontWeight: 700 }}>{fmt(selectedPartnerForStmt.netStanding)}</span></div>
+            </div>
+          </div>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Activity / Particulars</th>
+                  <th className="r">Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ledgerRows.filter(r => r.partnerName.toLowerCase() === selectedPartnerForStmt.name.toLowerCase()).map(r => (
+                  <tr key={r.id}>
+                    <td className="mono">{r.entryDate}</td>
+                    <td>{r.type}: {r.remarks}</td>
+                    <td className="r mono" style={{ fontWeight: 700, color: r.type === "Drawings" ? "var(--red)" : "var(--green)" }}>{r.type === "Drawings" ? "-" : "+"}{fmt(r.amount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Modal>
       )}
 
       {openCashModal && (
@@ -2007,19 +2299,42 @@ function MasterTableView({ title, noun, items, setItems, saveFn, delFn, fields, 
   );
 }
 
-// ── DASHBOARD OVERVIEW ────────────────────────────────────────────────────
-function DashboardView({ weighments, boulderReceipts, productionEntries, expenses, capitalItems, bankTxns, partnerCashbook }) {
+// ── DASHBOARD OVERVIEW WITH LOW-STOCK ALERTS ──────────────────────────────────
+function DashboardView({ weighments, boulderReceipts, productionEntries, expenses, capitalItems, bankTxns, partnerCashbook, grades }) {
   const totalCapex = (capitalItems || []).reduce((s, c) => s + (c.amount || 0), 0);
   const bankBalance = (bankTxns || []).reduce((s, t) => s + ((t.credit || 0) - (t.debit || 0)), 0);
   const totalPartnerCapital = (partnerCashbook || []).filter(e => e.type === "Capital Infusion").reduce((s, e) => s + (e.amount || 0), 0);
 
+  // Compute stock levels to flag low stock items
+  const stock = useMemo(() => computeStock(grades, boulderReceipts, productionEntries, weighments), [grades, boulderReceipts, productionEntries, weighments]);
+  const lowStockItems = Object.values(stock).filter(s => s.closing < 15);
+
   return (
-    <div className="stats-grid-5">
-      <StatCard label="Fixed Assets Gross" value={fmt(totalCapex)} color="teal" sub="Land & Plant" />
-      <StatCard label="Bank Balance" value={fmt(bankBalance)} color={bankBalance >= 0 ? "green" : "red"} sub="Liquid Cash" />
-      <StatCard label="Partner Capital" value={fmt(totalPartnerCapital)} color="accent" sub="Contributed" />
-      <StatCard label="Boulder Inward" value={`${(boulderReceipts || []).reduce((s,r) => s + (r.quantityMT || 0), 0).toFixed(1)} MT`} color="blue" sub="Deliveries" />
-      <StatCard label="Sales Dispatched" value={`${(weighments || []).filter(w => w.purpose === "Sale").reduce((s,w) => s + ((w.netWeight || 0)/1000), 0).toFixed(1)} MT`} color="purple" sub="Slips" />
+    <div>
+      {/* Low Stock & Consumable Reorder Alert Widget */}
+      {lowStockItems.length > 0 && (
+        <div style={{ background: "#201500", border: "1px solid #4a3500", borderRadius: "var(--r2)", padding: "14px 18px", marginBottom: 20, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "var(--amber)", marginBottom: 2 }}>⚠️ Low Stock & Reorder Alert</div>
+            <div style={{ fontSize: 12, color: "var(--text2)" }}>
+              {lowStockItems.length} grade(s) or consumable(s) are running below optimal threshold (15 MT). Check Stock Ledger.
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {lowStockItems.map(item => (
+              <span key={item.gradeId} className="badge badge-amber">{item.code}: {fmtMT(item.closing)}</span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="stats-grid-5">
+        <StatCard label="Fixed Assets Gross" value={fmt(totalCapex)} color="teal" sub="Land & Plant" />
+        <StatCard label="Bank Balance" value={fmt(bankBalance)} color={bankBalance >= 0 ? "green" : "red"} sub="Liquid Cash" />
+        <StatCard label="Partner Capital" value={fmt(totalPartnerCapital)} color="accent" sub="Contributed" />
+        <StatCard label="Boulder Inward" value={`${(boulderReceipts || []).reduce((s,r) => s + (r.quantityMT || 0), 0).toFixed(1)} MT`} color="blue" sub="Deliveries" />
+        <StatCard label="Sales Dispatched" value={`${(weighments || []).filter(w => w.purpose === "Sale").reduce((s,w) => s + ((w.netWeight || 0)/1000), 0).toFixed(1)} MT`} color="purple" sub="Slips" />
+      </div>
     </div>
   );
 }
