@@ -271,14 +271,10 @@ const CAP_CATS = [
   { id:"other", label:"Other Capital Assets" },
 ];
 const CP_TYPES = [
-  { id:"unlabeled", label:"Unlabeled" }, 
-  { id:"vendor", label:"Vendor / Supplier" },
-  { id:"customer", label:"Customer / Buyer" }, 
-  { id:"staff", label:"Staff / Labour" },
-  { id:"owner", label:"Owner / Capital" }, 
-  { id:"loan", label:"Loan / Bank" },
-  { id:"utility", label:"Utility / Rent" }, 
-  { id:"tax", label:"Tax / Government" },
+  { id:"unlabeled", label:"Unlabeled" }, { id:"vendor", label:"Vendor / Supplier" },
+  { id:"customer", label:"Customer / Buyer" }, { id:"staff", label:"Staff / Labour" },
+  { id:"owner", label:"Owner / Capital" }, { id:"loan", label:"Loan / Bank" },
+  { id:"utility", label:"Utility / Rent" }, { id:"tax", label:"Tax / Government" },
   { id:"capital_machinery", label:"Capital Asset: Machinery" },
   { id:"capital_land", label:"Capital Asset: Land & Civil" },
   { id:"other", label:"Other" },
@@ -777,7 +773,7 @@ function ProductionView({ grades, productionEntries, setProductionEntries, lots,
   );
 }
 
-// ── NEW: Daily Plant Reconciliation (Mass Balance) View ───────────────────────
+// ── Daily Plant Reconciliation (Mass Balance) View ────────────────────────────
 function PlantReconciliationView({ reconciliations, setReconciliations, boulderReceipts, productionEntries }) {
   const [open, setOpen] = useState(false);
   const blank = { date: today(), openingStockMT: "", boulderFedMT: "", finishedProducedMT: "", estimatedLossMT: "", remarks: "" };
@@ -986,7 +982,6 @@ function PurchasesView({ suppliers, purchases, setPurchases }) {
     } catch (err) { alert(err.message); }
   }
 
-  // Group purchases by supplier name
   const supplierGroups = useMemo(() => {
     const map = {};
     (purchases || []).forEach(p => {
@@ -1128,6 +1123,298 @@ function PurchasesView({ suppliers, purchases, setPurchases }) {
   );
 }
 
+function MonthlyOpsCostsView({ expenses, setExpenses }) {
+  const [ym, setYm] = useState(today().slice(0, 7));
+  const [vals, setVals] = useState({});
+  useEffect(() => {
+    const next = {};
+    OPS_CATS.forEach(c => {
+      const ex = expenses.filter(e => e.opsAuto && e.category === c && e.date?.slice(0, 7) === ym);
+      next[c] = ex.length ? String(ex.reduce((s, e) => s + e.amount, 0)) : "";
+    });
+    setVals(next);
+  }, [ym, expenses]);
+
+  async function save() {
+    try {
+      const updated = await db.saveMonthlyOpsCosts(ym, vals);
+      setExpenses(es => [...es.filter(e => !(e.opsAuto && e.date?.slice(0,7) === ym)), ...updated]);
+      alert("Monthly overheads synchronized!");
+    } catch (err) { alert(err.message); }
+  }
+
+  return (
+    <div className="config-card">
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
+        <h3>Monthly Operations Quick Entry</h3>
+        <FG label="Month Filter"><input type="month" value={ym} onChange={e => setYm(e.target.value)} style={{ padding:4 }} /></FG>
+      </div>
+      <div className="config-row">
+        {OPS_CATS.map(c => (
+          <FG key={c} label={`${c.toUpperCase()} (₹)`}>
+            <input type="number" value={vals[c] || ""} onChange={e => setVals({ ...vals, [c]: e.target.value })} />
+          </FG>
+        ))}
+      </div>
+      <button className="btn btn-primary" style={{ marginTop: 14 }} onClick={save}>Sync Overheads to Ledger</button>
+    </div>
+  );
+}
+
+function ExpensesView({ expenses, setExpenses, bankTxns, bankLabels }) {
+  const [open, setOpen] = useState(false);
+  const [expandedGroup, setExpandedGroup] = useState(null);
+  const [search, setSearch] = useState("");
+  const [selectedVendorForStmt, setSelectedVendorForStmt] = useState(null);
+  
+  const blank = { date: today(), category: "fuel", amount: "", description: "", paidTo: "", reference: "", paymentMode: "bank", totalDue: "" };
+  const [f, setF] = useState(blank);
+  const set = k => v => setF(x => ({ ...x, [k]: v }));
+
+  async function save() {
+    if (!f.amount || !f.description) return alert("Amount and description required.");
+    try {
+      const row = await db.saveExpense(f);
+      setExpenses(es => [row, ...es]);
+      setOpen(false); setF(blank);
+    } catch (err) { alert(err.message); }
+  }
+
+  const expenseGroups = useMemo(() => {
+    const map = {};
+
+    (bankTxns || []).forEach(t => {
+      if (!t || !t.debit || t.debit <= 0) return;
+      const k = t.key || t.group_key || (t.description ? normalizeDesc(t.description) : "UNKNOWN");
+      const meta = (bankLabels || {})[k] || {};
+      const vendorName = (meta.label && meta.label.trim()) ? meta.label.trim() : k;
+      const cpType = meta.type || "unlabeled";
+
+      if (cpType === "owner") return;
+
+      const groupKey = vendorName.toLowerCase();
+      if (!map[groupKey]) {
+        map[groupKey] = {
+          groupKey,
+          vendorName,
+          type: cpType,
+          totalPaid: 0,
+          totalDue: 0,
+          txns: []
+        };
+      }
+      map[groupKey].totalPaid += (+t.debit || 0);
+      map[groupKey].txns.push({
+        id: `bank-${t.id}`,
+        date: t.date || t.txn_date,
+        description: t.description,
+        amount: +t.debit,
+        source: "Bank Statement"
+      });
+    });
+
+    (expenses || []).forEach(e => {
+      if (!e) return;
+      const vendorName = e.paidTo || e.description || "General Expense";
+      const groupKey = vendorName.toLowerCase();
+      const amt = +e.amount || 0;
+      const due = +e.totalDue || 0;
+
+      if (!map[groupKey]) {
+        map[groupKey] = {
+          groupKey,
+          vendorName,
+          type: e.category || "vendor",
+          totalPaid: 0,
+          totalDue: 0,
+          txns: []
+        };
+      }
+      map[groupKey].totalPaid += amt;
+      map[groupKey].totalDue += Math.max(0, due - amt);
+      map[groupKey].txns.push({
+        id: `manual-${e.id}`,
+        date: e.date,
+        description: e.description,
+        amount: amt,
+        source: "Manual Entry"
+      });
+    });
+
+    return Object.values(map).sort((a, b) => (b.totalPaid + b.totalDue) - (a.totalPaid + a.totalDue));
+  }, [bankTxns, bankLabels, expenses]);
+
+  const filteredGroups = expenseGroups.filter(g => {
+    if (!search) return true;
+    return g.vendorName.toLowerCase().includes(search.toLowerCase()) || g.txns.some(t => t.description.toLowerCase().includes(search.toLowerCase()));
+  });
+
+  const totalPaidAll = expenseGroups.reduce((s, g) => s + g.totalPaid, 0);
+  const totalDueAll = expenseGroups.reduce((s, g) => s + g.totalDue, 0);
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
+        <div>
+          <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>Vendor Expenses & Payable Tracking</h3>
+          <p style={{ fontSize: 12, color: "var(--text3)" }}>Manage vendor disbursements, invoices, and pending payment obligations.</p>
+        </div>
+        <button className="btn btn-primary" onClick={() => setOpen(true)}>+ Add Expense / Invoice Due</button>
+      </div>
+
+      <div className="stats-grid">
+        <StatCard label="Total Paid Out" value={fmt(totalPaidAll)} color="red" sub="Cleared Disbursements" />
+        <StatCard label="Pending / Due Payments" value={fmt(totalDueAll)} color="amber" sub="Expected Liabilities" />
+        <StatCard label="Total Exposure" value={fmt(totalPaidAll + totalDueAll)} color="blue" sub="Paid + Due" />
+        <StatCard label="Active Vendors" value={expenseGroups.length} color="purple" sub="Counterparty groups" />
+      </div>
+
+      <div className="filter-bar">
+        <input
+          placeholder="Search vendor or description…"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          style={{ background: "var(--bg3)", border: "1px solid var(--border2)", borderRadius: "var(--r)", padding: "7px 11px", color: "var(--text)", fontSize: 12.5, minWidth: 260 }}
+        />
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {filteredGroups.length === 0 ? (
+          <div className="config-card" style={{ textAlign: "center", padding: 32 }}>
+            <EmptyState icon="💸" message="No vendor expenses or payments found" sub="Import a bank statement or record an expense invoice." />
+          </div>
+        ) : (
+          filteredGroups.map(g => (
+            <div key={g.groupKey} className="config-card" style={{ padding: 14 }}>
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end", justifyContent: "space-between" }}>
+                <div>
+                  <div style={{ fontSize: 11, color: "var(--text3)", fontFamily: "var(--mono)", textTransform: "uppercase" }}>Vendor / Counterparty</div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text)", marginTop: 2 }}>{g.vendorName}</div>
+                </div>
+                <div style={{ display: "flex", gap: 18, fontFamily: "var(--mono)", fontSize: 12.5 }}>
+                  <div><div style={{ color: "var(--text3)", fontSize: 10 }}>PAID</div><div style={{ color: "var(--red)", fontWeight: 700 }}>{fmt(g.totalPaid)}</div></div>
+                  <div><div style={{ color: "var(--text3)", fontSize: 10 }}>LEFT / DUE</div><div style={{ color: "var(--amber)", fontWeight: 700 }}>{fmt(g.totalDue)}</div></div>
+                  <div><div style={{ color: "var(--text3)", fontSize: 10 }}>TXNS</div><div style={{ fontWeight: 700 }}>{g.txns.length}</div></div>
+                </div>
+              </div>
+
+              <div style={{ marginTop: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: 11, color: "var(--text3)", fontFamily: "var(--mono)" }}>
+                  Category: {g.type}
+                </span>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button className="btn btn-info btn-sm" onClick={() => setSelectedVendorForStmt(g)}>
+                    📄 Party Statement
+                  </button>
+                  <button className="btn btn-ghost btn-sm" onClick={() => setExpandedGroup(x => x === g.groupKey ? null : g.groupKey)}>
+                    {expandedGroup === g.groupKey ? "Hide" : "View"} transactions ({g.txns.length})
+                  </button>
+                </div>
+              </div>
+
+              {expandedGroup === g.groupKey && (
+                <div className="table-wrap" style={{ marginTop: 10 }}>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Date</th>
+                        <th>Narration / Description</th>
+                        <th>Source</th>
+                        <th className="r">Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {g.txns.sort((a, b) => (b.date || "").localeCompare(a.date || "")).map(t => (
+                        <tr key={t.id}>
+                          <td className="mono" style={{ fontSize: 11, color: "var(--text3)" }}>{t.date}</td>
+                          <td style={{ fontSize: 12 }}>{t.description}</td>
+                          <td><BadgeComponent type={t.source === "Bank Statement" ? "blue" : "accent"}>{t.source}</BadgeComponent></td>
+                          <td className="r mono" style={{ fontSize: 11, color: "var(--red)", fontWeight: 700 }}>{fmt(t.amount)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          ))
+        )}
+      </div>
+
+      {selectedVendorForStmt && (
+        <Modal 
+          title={`Statement of Account: ${selectedVendorForStmt.vendorName}`} 
+          size="modal-lg" 
+          onClose={() => setSelectedVendorForStmt(null)} 
+          foot={
+            <div style={{ display: "flex", gap: 8 }}>
+              <button className="btn btn-ghost" onClick={() => window.print()}>🖨 Print / Export PDF</button>
+              <button className="btn btn-primary" onClick={() => alert("Statement link ready to share via WhatsApp!")}>💬 Share via WhatsApp</button>
+            </div>
+          }
+        >
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ display: "flex", gap: 20, fontFamily: "var(--mono)", fontSize: 13, background: "var(--bg3)", padding: 12, borderRadius: "var(--r)" }}>
+              <div>Total Disbursed: <span style={{ color: "var(--red)", fontWeight: 700 }}>{fmt(selectedVendorForStmt.totalPaid)}</span></div>
+              <div>Pending Due: <span style={{ color: "var(--amber)", fontWeight: 700 }}>{fmt(selectedVendorForStmt.totalDue)}</span></div>
+            </div>
+          </div>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Description</th>
+                  <th>Source</th>
+                  <th className="r">Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {selectedVendorForStmt.txns.map(t => (
+                  <tr key={t.id}>
+                    <td className="mono">{t.date}</td>
+                    <td>{t.description}</td>
+                    <td><BadgeComponent type="muted">{t.source}</BadgeComponent></td>
+                    <td className="r mono" style={{ fontWeight: 700 }}>{fmt(t.amount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Modal>
+      )}
+
+      {open && (
+        <Modal title="Record Expense / Vendor Invoice Due" onClose={() => setOpen(false)} foot={<><button className="btn btn-ghost" onClick={() => setOpen(false)}>Cancel</button><button className="btn btn-primary" onClick={save}>Save Entry</button></>}>
+          <div className="form-row cols-2">
+            <FG label="Date"><input type="date" value={f.date} onChange={e => set("date")(e.target.value)} /></FG>
+            <FG label="Category">
+              <select value={f.category} onChange={e => set("category")(e.target.value)}>
+                {EXP_CATS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+              </select>
+            </FG>
+          </div>
+          <div className="form-row cols-2">
+            <FG label="Amount Paid Now (₹)"><input type="number" value={f.amount} onChange={e => set("amount")(e.target.value)} /></FG>
+            <FG label="Total Invoice Amount Due (₹)"><input type="number" placeholder="Leave blank if fully paid" value={f.totalDue} onChange={e => set("totalDue")(e.target.value)} /></FG>
+          </div>
+          <div className="form-row"><FG label="Paid To / Vendor Name *"><input placeholder="e.g. Mateshwari Industries" value={f.paidTo} onChange={e => set("paidTo")(e.target.value)} /></FG></div>
+          <div className="form-row"><FG label="Description / Bill Particulars *"><input value={f.description} onChange={e => set("description")(e.target.value)} /></FG></div>
+          <div className="form-row cols-2">
+            <FG label="Channel">
+              <select value={f.paymentMode} onChange={e => set("paymentMode")(e.target.value)}>
+                <option value="bank">Bank / UPI</option>
+                <option value="cash">Site Petty Cash</option>
+              </select>
+            </FG>
+            <FG label="Invoice / Voucher Ref"><input value={f.reference} onChange={e => set("reference")(e.target.value)} /></FG>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
 function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabels }) {
   const [open, setOpen] = useState(false);
   const [expandedCategory, setExpandedCategory] = useState(null);
@@ -1146,7 +1433,6 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
     } catch (err) { alert(err.message); }
   }
 
-  // Combine manual capital items with bank statement transactions tagged as capital
   const allCapitalRows = useMemo(() => {
     const list = [];
 
@@ -1194,7 +1480,6 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
     return list.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
   }, [capitalItems, bankTxns, bankLabels]);
 
-  // Group rows by asset category
   const categoryGroups = useMemo(() => {
     const map = {};
     CAP_CATS.forEach(c => {
@@ -1346,6 +1631,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
     </div>
   );
 }
+
 // ── BANK STATEMENT GROUPING VIEW ─────────────────────────────────────────────
 function CounterpartyNameInput({ rawKeys, currentLabel, placeholder, onSave }) {
   const [val, setVal] = useState(currentLabel || "");
@@ -1446,7 +1732,6 @@ function BankStatementGroupingView({ bankBatches, setBankBatches, bankTxns, setB
     } catch (err) { alert(err.message); }
   }
 
-  // AUTO-ROUTING LOGIC WHEN UPDATING LABELS/TYPES
   async function updateLabel(rawKeys, patch) {
     try {
       await db.updateBankLabels(rawKeys, patch);
@@ -1456,7 +1741,6 @@ function BankStatementGroupingView({ bankBatches, setBankBatches, bankTxns, setB
         return next;
       });
 
-      // If type changed to a capital asset category, auto-promote matching bank txns
       if (patch.type && patch.type.startsWith("capital_")) {
         const cat = patch.type === "capital_land" ? "land" : "machinery";
         bankTxns.forEach(async t => {
@@ -1465,8 +1749,15 @@ function BankStatementGroupingView({ bankBatches, setBankBatches, bankTxns, setB
             setCapitalItems(cs => [item, ...cs]);
           }
         });
-        alert("Group categorized as Capital Asset. Matching debit transactions auto-routed to Capital & Infra!");
       }
+    } catch (err) { alert(err.message); }
+  }
+
+  async function logCashbook(t, partnerName, type, accountType) {
+    try {
+      const entry = await db.logPartnerCashbookEntry(t, partnerName, type, accountType);
+      setPartnerCashbook(cb => [entry, ...cb]);
+      alert(`Logged ${type} of ${fmt(entry.amount)} for ${partnerName}`);
     } catch (err) { alert(err.message); }
   }
 
@@ -1896,7 +2187,6 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPa
         </div>
       )}
 
-      {/* PARTNER STATEMENT MODAL */}
       {selectedPartnerForStmt && (
         <Modal 
           title={`Partner Capital Account: ${selectedPartnerForStmt.name}`} 
@@ -2194,13 +2484,11 @@ function DashboardView({ weighments, boulderReceipts, productionEntries, expense
   const bankBalance = (bankTxns || []).reduce((s, t) => s + ((t.credit || 0) - (t.debit || 0)), 0);
   const totalPartnerCapital = (partnerCashbook || []).filter(e => e.type === "Capital Infusion").reduce((s, e) => s + (e.amount || 0), 0);
 
-  // Compute stock levels to flag low stock items
   const stock = useMemo(() => computeStock(grades, boulderReceipts, productionEntries, weighments), [grades, boulderReceipts, productionEntries, weighments]);
   const lowStockItems = Object.values(stock).filter(s => s.closing < 15);
 
   return (
     <div>
-      {/* Low Stock & Consumable Reorder Alert Widget */}
       {lowStockItems.length > 0 && (
         <div style={{ background: "#201500", border: "1px solid #4a3500", borderRadius: "var(--r2)", padding: "14px 18px", marginBottom: 20, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
           <div>
