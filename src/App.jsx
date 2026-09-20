@@ -1713,7 +1713,7 @@ function CounterpartyNameInput({ rawKeys, currentLabel, placeholder, onSave }) {
   );
 }
 
-function BankStatementGroupingView({ bankBatches, setBankBatches, bankTxns, setBankTxns, bankLabels, setBankLabels, setCapitalItems, setExpenses, setPartnerCashbook }) {
+function BankStatementGroupingView({ bankBatches, setBankBatches, bankTxns, setBankTxns, bankLabels, setBankLabels, capitalItems, setCapitalItems, setExpenses, setPartnerCashbook }) {
   const [sheet, setSheet] = useState(null);
   const [map, setMap] = useState({ dateCol:"", descCol:"", mode:"separate", debitCol:"", creditCol:"", amountCol:"" });
   const [search, setSearch] = useState("");
