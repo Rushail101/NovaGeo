@@ -557,7 +557,11 @@ export default function App() {
             {view === "opscosts" && <MonthlyOpsCostsView {...{ expenses, setExpenses }} />}
             {view === "expenses" && <ExpensesView {...{ expenses, setExpenses, bankTxns, bankLabels }} />}
             {view === "capital" && <CapitalRegisterView {...{ capitalItems, setCapitalItems, bankTxns, bankLabels }} />}
-            {view === "bankstatement" && <BankStatementGroupingView {...{ bankBatches, setBankBatches, bankTxns, setBankTxns, bankLabels, setBankLabels, setCapitalItems, setExpenses, setPartnerCashbook }} />}
+            {view === "bankstatement" && (
+              <BankStatementGroupingView 
+                {...{ bankBatches, setBankBatches, bankTxns, setBankTxns, bankLabels, setBankLabels, capitalItems, setCapitalItems, setExpenses, setPartnerCashbook }} 
+              />
+            )}
             {view === "partners" && (
               <PartnersCapitalDashboard
                 bankTxns={bankTxns}
