@@ -935,7 +935,10 @@ function MonthlyOpsCostsView({ expenses, setExpenses }) {
 
 function ExpensesView({ expenses, setExpenses, bankTxns, bankLabels }) {
   const [open, setOpen] = useState(false);
-  const blank = { date: today(), category: "fuel", amount: "", description: "", paidTo: "", reference: "", paymentMode: "bank" };
+  const [expandedGroup, setExpandedGroup] = useState(null);
+  const [search, setSearch] = useState("");
+  
+  const blank = { date: today(), category: "fuel", amount: "", description: "", paidTo: "", reference: "", paymentMode: "bank", totalDue: "" };
   const [f, setF] = useState(blank);
   const set = k => v => setF(x => ({ ...x, [k]: v }));
 
@@ -948,130 +951,167 @@ function ExpensesView({ expenses, setExpenses, bankTxns, bankLabels }) {
     } catch (err) { alert(err.message); }
   }
 
-  // 1. Group bank transactions using the exact same logic as Bank Statement cards
-  const allExpenseRows = useMemo(() => {
-    const list = [];
+  // 1. Build grouped vendor cards from bank debits + manual expenses
+  const expenseGroups = useMemo(() => {
+    const map = {};
 
-    // Add manual expenses
-    (expenses || []).forEach(e => {
-      if (!e) return;
-      list.push({
-        id: `manual-${e.id}`,
-        date: e.date,
-        category: e.category || "misc",
-        description: e.description,
-        paidTo: e.paidTo || "—",
-        paymentMode: e.paymentMode || "bank",
-        amount: +e.amount || 0,
-        source: "Manual"
-      });
-    });
-
-    // Add bank debits (payments out) mapped through bankLabels
+    // Process bank statement debit transactions mapped through bankLabels
     (bankTxns || []).forEach(t => {
       if (!t || !t.debit || t.debit <= 0) return;
       const k = t.key || t.group_key || (t.description ? normalizeDesc(t.description) : "UNKNOWN");
       const meta = (bankLabels || {})[k] || {};
-      
-      // Use the custom user-typed label if available, otherwise fallback to raw key
       const vendorName = (meta.label && meta.label.trim()) ? meta.label.trim() : k;
       const cpType = meta.type || "unlabeled";
 
-      // Skip owner withdrawals/capital from operating vendor expenses
-      if (cpType === "owner") return;
+      if (cpType === "owner") return; // Skip partner capital/drawings
 
-      list.push({
+      const groupKey = vendorName.toLowerCase();
+      if (!map[groupKey]) {
+        map[groupKey] = {
+          groupKey,
+          vendorName,
+          type: cpType,
+          totalPaid: 0,
+          totalDue: 0,
+          txns: []
+        };
+      }
+      map[groupKey].totalPaid += (+t.debit || 0);
+      map[groupKey].txns.push({
         id: `bank-${t.id}`,
         date: t.date || t.txn_date,
-        category: cpType !== "unlabeled" ? cpType : "vendor",
         description: t.description,
-        paidTo: vendorName,
-        paymentMode: "bank",
-        amount: +t.debit || 0,
+        amount: +t.debit,
         source: "Bank Statement"
       });
     });
 
-    return list.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
-  }, [expenses, bankTxns, bankLabels]);
+    // Process manual expenses & invoice liabilities
+    (expenses || []).forEach(e => {
+      if (!e) return;
+      const vendorName = e.paidTo || e.description || "General Expense";
+      const groupKey = vendorName.toLowerCase();
+      const amt = +e.amount || 0;
+      const due = +e.totalDue || 0;
 
-  // 2. Group totals by Vendor / Paid To
-  const vendorTotals = useMemo(() => {
-    const map = {};
-    allExpenseRows.forEach(row => {
-      const v = row.paidTo || "Unknown Vendor";
-      if (!map[v]) map[v] = { vendor: v, total: 0, count: 0 };
-      map[v].total += row.amount;
-      map[v].count += 1;
+      if (!map[groupKey]) {
+        map[groupKey] = {
+          groupKey,
+          vendorName,
+          type: e.category || "vendor",
+          totalPaid: 0,
+          totalDue: 0,
+          txns: []
+        };
+      }
+      map[groupKey].totalPaid += amt;
+      map[groupKey].totalDue += Math.max(0, due - amt);
+      map[groupKey].txns.push({
+        id: `manual-${e.id}`,
+        date: e.date,
+        description: e.description,
+        amount: amt,
+        source: "Manual Entry"
+      });
     });
-    return Object.values(map).sort((a, b) => b.total - a.total);
-  }, [allExpenseRows]);
 
-  const totalSpendAll = allExpenseRows.reduce((s, r) => s + r.amount, 0);
+    return Object.values(map).sort((a, b) => (b.totalPaid + b.totalDue) - (a.totalPaid + a.totalDue));
+  }, [bankTxns, bankLabels, expenses]);
+
+  const filteredGroups = expenseGroups.filter(g => {
+    if (!search) return true;
+    return g.vendorName.toLowerCase().includes(search.toLowerCase()) || g.txns.some(t => t.description.toLowerCase().includes(search.toLowerCase()));
+  });
+
+  const totalPaidAll = expenseGroups.reduce((s, g) => s + g.totalPaid, 0);
+  const totalDueAll = expenseGroups.reduce((s, g) => s + g.totalDue, 0);
 
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
         <div>
-          <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>Operating Expenses & Vendor Payments</h3>
-          <p style={{ fontSize: 12, color: "var(--text3)" }}>Total Combined Spend: <strong style={{ color: "var(--red)" }}>{fmt(totalSpendAll)}</strong></p>
+          <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>Vendor Expenses & Payable Tracking</h3>
+          <p style={{ fontSize: 12, color: "var(--text3)" }}>Manage vendor disbursements, invoices, and pending payment obligations.</p>
         </div>
-        <button className="btn btn-primary" onClick={() => setOpen(true)}>+ Add Expense Entry</button>
+        <button className="btn btn-primary" onClick={() => setOpen(true)}>+ Add Expense / Invoice Due</button>
       </div>
 
-      {/* Vendor Breakdown Summary Cards */}
-      {vendorTotals.length > 0 && (
-        <div style={{ marginBottom: 20 }}>
-          <div style={{ fontSize: 11, color: "var(--text3)", textTransform: "uppercase", fontFamily: "var(--mono)", marginBottom: 8 }}>Totals by Vendor / Counterparty</div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
-            {vendorTotals.slice(0, 8).map(v => (
-              <div key={v.vendor} className="stat-card red" style={{ padding: "12px 16px" }}>
-                <div className="stat-label" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v.vendor}</div>
-                <div className="stat-val red" style={{ fontSize: "18px" }}>{fmt(v.total)}</div>
-                <div className="stat-sub">{v.count} payment(s) made</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      <div className="stats-grid">
+        <StatCard label="Total Paid Out" value={fmt(totalPaidAll)} color="red" sub="Cleared Disbursements" />
+        <StatCard label="Pending / Due Payments" value={fmt(totalDueAll)} color="amber" sub="Expected Liabilities" />
+        <StatCard label="Total Exposure" value={fmt(totalPaidAll + totalDueAll)} color="blue" sub="Paid + Due" />
+        <StatCard label="Active Vendors" value={expenseGroups.length} color="purple" sub="Counterparty groups" />
+      </div>
 
-      {/* Detailed Transaction Table */}
-      <div className="table-wrap">
-        <div className="table-toolbar">
-          <h3>All Expense & Payment Transactions ({allExpenseRows.length})</h3>
-        </div>
-        <table>
-          <thead>
-            <tr>
-              <th>Date</th>
-              <th>Paid To / Vendor</th>
-              <th>Category / Type</th>
-              <th>Narration / Description</th>
-              <th>Source</th>
-              <th className="r">Amount Paid</th>
-            </tr>
-          </thead>
-          <tbody>
-            {allExpenseRows.length === 0 ? (
-              <tr><td colSpan={6} style={{ textAlign: "center", color: "var(--text3)", padding: 32 }}>No expenses or bank debits found. Import a statement or add an expense.</td></tr>
-            ) : (
-              allExpenseRows.map(r => (
-                <tr key={r.id}>
-                  <td className="mono" style={{ fontSize: 11, color: "var(--text3)" }}>{r.date}</td>
-                  <td style={{ fontWeight: 600 }}>{r.paidTo}</td>
-                  <td><BadgeComponent type="muted">{r.category}</BadgeComponent></td>
-                  <td style={{ fontSize: 12 }}>{r.description}</td>
-                  <td><BadgeComponent type={r.source === "Bank Statement" ? "blue" : "accent"}>{r.source}</BadgeComponent></td>
-                  <td className="r mono" style={{ color: "var(--red)", fontWeight: 700 }}>{fmt(r.amount)}</td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+      <div className="filter-bar">
+        <input
+          placeholder="Search vendor or description…"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          style={{ background: "var(--bg3)", border: "1px solid var(--border2)", borderRadius: "var(--r)", padding: "7px 11px", color: "var(--text)", fontSize: 12.5, minWidth: 260 }}
+        />
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {filteredGroups.length === 0 ? (
+          <div className="config-card" style={{ textAlign: "center", padding: 32 }}>
+            <EmptyState icon="💸" message="No vendor expenses or payments found" sub="Import a bank statement or record an expense invoice." />
+          </div>
+        ) : (
+          filteredGroups.map(g => (
+            <div key={g.groupKey} className="config-card" style={{ padding: 14 }}>
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end", justifyContent: "space-between" }}>
+                <div>
+                  <div style={{ fontSize: 11, color: "var(--text3)", fontFamily: "var(--mono)", textTransform: "uppercase" }}>Vendor / Counterparty</div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text)", marginTop: 2 }}>{g.vendorName}</div>
+                </div>
+                <div style={{ display: "flex", gap: 18, fontFamily: "var(--mono)", fontSize: 12.5 }}>
+                  <div><div style={{ color: "var(--text3)", fontSize: 10 }}>PAID</div><div style={{ color: "var(--red)", fontWeight: 700 }}>{fmt(g.totalPaid)}</div></div>
+                  <div><div style={{ color: "var(--text3)", fontSize: 10 }}>LEFT / DUE</div><div style={{ color: "var(--amber)", fontWeight: 700 }}>{fmt(g.totalDue)}</div></div>
+                  <div><div style={{ color: "var(--text3)", fontSize: 10 }}>TXNS</div><div style={{ fontWeight: 700 }}>{g.txns.length}</div></div>
+                </div>
+              </div>
+
+              <div style={{ marginTop: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: 11, color: "var(--text3)", fontFamily: "var(--mono)" }}>
+                  Category: {g.type}
+                </span>
+                <button className="btn btn-ghost btn-sm" onClick={() => setExpandedGroup(x => x === g.groupKey ? null : g.groupKey)}>
+                  {expandedGroup === g.groupKey ? "Hide" : "View"} transactions ({g.txns.length})
+                </button>
+              </div>
+
+              {expandedGroup === g.groupKey && (
+                <div className="table-wrap" style={{ marginTop: 10 }}>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Date</th>
+                        <th>Narration / Description</th>
+                        <th>Source</th>
+                        <th className="r">Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {g.txns.sort((a, b) => (b.date || "").localeCompare(a.date || "")).map(t => (
+                        <tr key={t.id}>
+                          <td className="mono" style={{ fontSize: 11, color: "var(--text3)" }}>{t.date}</td>
+                          <td style={{ fontSize: 12 }}>{t.description}</td>
+                          <td><BadgeComponent type={t.source === "Bank Statement" ? "blue" : "accent"}>{t.source}</BadgeComponent></td>
+                          <td className="r mono" style={{ fontSize: 11, color: "var(--red)", fontWeight: 700 }}>{fmt(t.amount)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          ))
+        )}
       </div>
 
       {open && (
-        <Modal title="Record Direct Expense" onClose={() => setOpen(false)} foot={<><button className="btn btn-ghost" onClick={() => setOpen(false)}>Cancel</button><button className="btn btn-primary" onClick={save}>Save Expense</button></>}>
+        <Modal title="Record Expense / Vendor Invoice Due" onClose={() => setOpen(false)} foot={<><button className="btn btn-ghost" onClick={() => setOpen(false)}>Cancel</button><button className="btn btn-primary" onClick={save}>Save Entry</button></>}>
           <div className="form-row cols-2">
             <FG label="Date"><input type="date" value={f.date} onChange={e => set("date")(e.target.value)} /></FG>
             <FG label="Category">
@@ -1081,18 +1121,19 @@ function ExpensesView({ expenses, setExpenses, bankTxns, bankLabels }) {
             </FG>
           </div>
           <div className="form-row cols-2">
-            <FG label="Amount (₹)"><input type="number" value={f.amount} onChange={e => set("amount")(e.target.value)} /></FG>
+            <FG label="Amount Paid Now (₹)"><input type="number" value={f.amount} onChange={e => set("amount")(e.target.value)} /></FG>
+            <FG label="Total Invoice Amount Due (₹)"><input type="number" placeholder="Leave blank if fully paid" value={f.totalDue} onChange={e => set("totalDue")(e.target.value)} /></FG>
+          </div>
+          <div className="form-row"><FG label="Paid To / Vendor Name *"><input placeholder="e.g. Mateshwari Industries" value={f.paidTo} onChange={e => set("paidTo")(e.target.value)} /></FG></div>
+          <div className="form-row"><FG label="Description / Bill Particulars *"><input value={f.description} onChange={e => set("description")(e.target.value)} /></FG></div>
+          <div className="form-row cols-2">
             <FG label="Channel">
               <select value={f.paymentMode} onChange={e => set("paymentMode")(e.target.value)}>
                 <option value="bank">Bank / UPI</option>
                 <option value="cash">Site Petty Cash</option>
               </select>
             </FG>
-          </div>
-          <div className="form-row"><FG label="Description"><input value={f.description} onChange={e => set("description")(e.target.value)} /></FG></div>
-          <div className="form-row cols-2">
-            <FG label="Paid To (Vendor)"><input value={f.paidTo} onChange={e => set("paidTo")(e.target.value)} /></FG>
-            <FG label="Bill / Voucher Ref"><input value={f.reference} onChange={e => set("reference")(e.target.value)} /></FG>
+            <FG label="Invoice / Voucher Ref"><input value={f.reference} onChange={e => set("reference")(e.target.value)} /></FG>
           </div>
         </Modal>
       )}
