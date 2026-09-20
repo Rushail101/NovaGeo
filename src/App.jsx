@@ -112,7 +112,65 @@ tr:hover td{background:rgba(255,255,255,.02)}
 .lot-chip{display:inline-flex;align-items:center;gap:5px;background:#0a1a00;border:1px solid #1e3a00;border-radius:var(--r);padding:3px 10px;font-family:var(--mono);font-size:11px;color:var(--accent)}
 .output-rows{display:flex;flex-direction:column;gap:8px}
 .output-row{display:grid;grid-template-columns:1fr 1fr auto;gap:8px;align-items:end}
+
+/* ── Mobile & Tablet Responsiveness ── */
+@media (max-width: 860px) {
+  .form-group input, .form-group select, .form-group textarea {
+    font-size: 16px !important;
+  }
+  .btn {
+    padding: 10px 14px;
+    font-size: 13px;
+    min-height: 38px;
+  }
+  .btn-sm {
+    padding: 6px 10px;
+    font-size: 11.5px;
+    min-height: 30px;
+  }
+  .topbar {
+    padding: 12px 18px;
+  }
+  .content {
+    padding: 16px 18px;
+  }
+  .table-wrap {
+    -webkit-overflow-scrolling: touch;
+    overflow-x: auto;
+  }
+  .stats-grid, .stats-grid-5 {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .stat-card {
+    padding: 12px 14px;
+  }
+  .stat-val {
+    font-size: 19px;
+  }
+  .pill-tabs {
+    width: 100%;
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    padding-bottom: 4px;
+  }
+  .pill-tab {
+    flex-shrink: 0;
+  }
+  .two-col {
+    grid-template-columns: 1fr;
+  }
+  .form-row.cols-2, .form-row.cols-3 {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 480px) {
+  .stats-grid, .stats-grid-5 {
+    grid-template-columns: 1fr;
+  }
+}
 `;
+
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const SHIFTS = ["Morning (6AM–2PM)","Afternoon (2PM–10PM)","Night (10PM–6AM)"];
