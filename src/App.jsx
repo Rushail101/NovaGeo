@@ -1423,6 +1423,7 @@ function ExpensesView({ expenses, setExpenses, bankTxns, bankLabels }) {
 function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabels }) {
   const [open, setOpen] = useState(false);
   const [expandedCategory, setExpandedCategory] = useState(null);
+  const [expandedSubCategory, setExpandedSubCategory] = useState(null);
   const [search, setSearch] = useState("");
 
   const blank = { date: today(), category: "machinery", subCategory: "", description: "", amount: "", paidTo: "", reference: "", fundedBy: "own", paymentMode: "bank", paidByPartner: "" };
@@ -1435,7 +1436,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
       const payload = {
         date: f.date,
         category: f.category,
-        subCategory: f.subCategory,
+        subCategory: f.subCategory || "General",
         description: f.description,
         amount: +f.amount,
         paidTo: f.paidTo,
@@ -1454,43 +1455,31 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
     const list = [];
     const currentDate = new Date();
 
-    (bankTxns || []).forEach(t => {
-      if (!t || !t.debit || t.debit <= 0) return;
-      const k = t.key || t.group_key || (t.description ? normalizeDesc(t.description) : "UNKNOWN");
-      const meta = (bankLabels || {})[k] || {};
-      const type = meta.type || "unlabeled";
+    (capitalItems || []).forEach(c => {
+      if (!c) return;
+      const catConfig = CAP_CATS.find(x => x.id === (c.category || "machinery")) || { defaultRate: 15 };
+      const rate = catConfig.defaultRate / 100;
+      
+      const acqDate = new Date(c.date || today());
+      const ageYears = Math.max(0, (currentDate - acqDate) / (1000 * 60 * 60 * 24 * 365.25));
+      const originalAmount = +c.amount || 0;
+      const netBookValue = rate === 0 ? originalAmount : Math.max(0, originalAmount * Math.pow(1 - rate, ageYears));
 
-      if (type.startsWith("capital_")) {
-        const vendorName = (meta.label && meta.label.trim()) ? meta.label.trim() : k;
-        let cat = "machinery";
-        if (type === "capital_land") cat = "land";
-        else if (type === "capital_electrical") cat = "electrical";
-        else if (type === "capital_vehicles") cat = "vehicle";
-
-        const catConfig = CAP_CATS.find(x => x.id === cat) || { defaultRate: 15 };
-        const rate = catConfig.defaultRate / 100;
-
-        const acqDate = new Date(t.date || t.txn_date || today());
-        const ageYears = Math.max(0, (currentDate - acqDate) / (1000 * 60 * 60 * 24 * 365.25));
-        const originalAmount = +t.debit || 0;
-        const netBookValue = rate === 0 ? originalAmount : Math.max(0, originalAmount * Math.pow(1 - rate, ageYears));
-
-        list.push({
-          id: `bank-${t.id}`,
-          capNo: "CAP-B",
-          date: t.date || t.txn_date,
-          category: cat,
-          subCategory: vendorName, // Uses the exact group name from Bank Statement!
-          description: t.description,
-          paidTo: vendorName,
-          paymentMode: "bank",
-          fundedBy: "own",
-          paidByPartner: "",
-          amount: originalAmount,
-          netBookValue,
-          source: "Bank Statement"
-        });
-      }
+      list.push({
+        id: `manual-${c.id}`,
+        capNo: c.capNo || "CAP-M",
+        date: c.date,
+        category: c.category || "machinery",
+        subCategory: c.subCategory || "General",
+        description: c.description,
+        paidTo: c.paidTo || "—",
+        paymentMode: c.paymentMode || "bank",
+        fundedBy: c.fundedBy || "own",
+        paidByPartner: c.paidByPartner || "",
+        amount: originalAmount,
+        netBookValue,
+        source: "Manual"
+      });
     });
 
     (bankTxns || []).forEach(t => {
@@ -1519,7 +1508,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
           capNo: "CAP-B",
           date: t.date || t.txn_date,
           category: cat,
-          subCategory: "Bank Auto-Routed",
+          subCategory: vendorName,
           description: t.description,
           paidTo: vendorName,
           paymentMode: "bank",
@@ -1538,25 +1527,39 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
   const categoryGroups = useMemo(() => {
     const map = {};
     CAP_CATS.forEach(c => {
-      map[c.id] = { categoryId: c.id, label: c.label, total: 0, netBookVal: 0, items: [] };
+      map[c.id] = { categoryId: c.id, label: c.label, total: 0, netBookVal: 0, subCategoriesMap: {}, items: [] };
     });
 
     allCapitalRows.forEach(item => {
       const cat = item.category || "other";
       if (!map[cat]) {
-        map[cat] = { categoryId: cat, label: cat.toUpperCase(), total: 0, netBookVal: 0, items: [] };
+        map[cat] = { categoryId: cat, label: cat.toUpperCase(), total: 0, netBookVal: 0, subCategoriesMap: {}, items: [] };
       }
       map[cat].total += item.amount;
       map[cat].netBookVal += item.netBookValue;
       map[cat].items.push(item);
+
+      const subCatName = item.subCategory || "General";
+      if (!map[cat].subCategoriesMap[subCatName]) {
+        map[cat].subCategoriesMap[subCatName] = { name: subCatName, total: 0, netBookVal: 0, items: [] };
+      }
+      map[cat].subCategoriesMap[subCatName].total += item.amount;
+      map[cat].subCategoriesMap[subCatName].netBookVal += item.netBookValue;
+      map[cat].subCategoriesMap[subCatName].items.push(item);
     });
 
-    return Object.values(map).filter(g => g.total > 0).sort((a, b) => b.total - a.total);
+    return Object.values(map)
+      .filter(g => g.total > 0)
+      .map(g => ({
+        ...g,
+        subCategories: Object.values(g.subCategoriesMap).sort((a, b) => b.total - a.total)
+      }))
+      .sort((a, b) => b.total - a.total);
   }, [allCapitalRows]);
 
   const filteredGroups = categoryGroups.filter(g => {
     if (!search) return true;
-    return g.label.toLowerCase().includes(search.toLowerCase()) || g.items.some(i => i.description.toLowerCase().includes(search.toLowerCase()) || i.subCategory.toLowerCase().includes(search.toLowerCase()));
+    return g.label.toLowerCase().includes(search.toLowerCase()) || g.subCategories.some(sc => sc.name.toLowerCase().includes(search.toLowerCase()) || sc.items.some(i => i.description.toLowerCase().includes(search.toLowerCase())));
   });
 
   const totalCapexAll = allCapitalRows.reduce((s, c) => s + c.amount, 0);
@@ -1604,7 +1607,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
                 <div style={{ display: "flex", gap: 18, fontFamily: "var(--mono)", fontSize: 12.5 }}>
                   <div><div style={{ color: "var(--text3)", fontSize: 10 }}>GROSS COST</div><div style={{ color: "var(--accent)", fontWeight: 700 }}>{fmt(g.total)}</div></div>
                   <div><div style={{ color: "var(--text3)", fontSize: 10 }}>NET BOOK VALUE</div><div style={{ color: "var(--teal)", fontWeight: 700 }}>{fmt(g.netBookVal)}</div></div>
-                  <div><div style={{ color: "var(--text3)", fontSize: 10 }}>ITEMS</div><div style={{ fontWeight: 700 }}>{g.items.length}</div></div>
+                  <div><div style={{ color: "var(--text3)", fontSize: 10 }}>GROUPS</div><div style={{ fontWeight: 700 }}>{g.subCategories.length}</div></div>
                 </div>
               </div>
 
@@ -1613,36 +1616,55 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
                   Depreciation Rate: {CAP_CATS.find(c => c.id === g.categoryId)?.defaultRate || 0}% p.a.
                 </span>
                 <button className="btn btn-ghost btn-sm" onClick={() => setExpandedCategory(x => x === g.categoryId ? null : g.categoryId)}>
-                  {expandedCategory === g.categoryId ? "Hide" : "View"} items ({g.items.length})
+                  {expandedCategory === g.categoryId ? "Hide Sub-Categories" : "View Sub-Categories"} ({g.subCategories.length})
                 </button>
               </div>
 
               {expandedCategory === g.categoryId && (
-                <div className="table-wrap" style={{ marginTop: 10 }}>
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Date</th>
-                        <th>Sub-Category</th>
-                        <th>Description / Paid To</th>
-                        <th>Funding</th>
-                        <th className="r">Gross Cost</th>
-                        <th className="r">Net Book Value</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {g.items.sort((a, b) => (b.date || "").localeCompare(a.date || "")).map(item => (
-                        <tr key={item.id}>
-                          <td className="mono" style={{ fontSize: 11, color: "var(--text3)" }}>{item.date}</td>
-                          <td><BadgeComponent type="muted">{item.subCategory}</BadgeComponent></td>
-                          <td style={{ fontWeight: 600 }}>{item.description} <span style={{ color: "var(--text3)", fontWeight: 400 }}>({item.paidTo})</span></td>
-                          <td><BadgeComponent type={item.fundedBy === "loan" ? "amber" : "green"}>{item.fundedBy}{item.paidByPartner ? ` (${item.paidByPartner})` : ""}</BadgeComponent></td>
-                          <td className="r mono" style={{ fontWeight: 700 }}>{fmt(item.amount)}</td>
-                          <td className="r mono" style={{ color: "var(--teal)", fontWeight: 700 }}>{fmt(item.netBookValue)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+                  {g.subCategories.map(sc => (
+                    <div key={sc.name} style={{ background: "var(--bg3)", border: "1px solid var(--border)", borderRadius: "var(--r)", padding: 12 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <div>
+                          <span className="badge badge-accent" style={{ marginRight: 8 }}>Sub-Group</span>
+                          <strong style={{ fontSize: 13, color: "var(--text)" }}>{sc.name}</strong>
+                        </div>
+                        <div style={{ display: "flex", gap: 16, fontFamily: "var(--mono)", fontSize: 12, alignItems: "center" }}>
+                          <div>Cost: <span style={{ color: "var(--accent)", fontWeight: 700 }}>{fmt(sc.total)}</span></div>
+                          <button className="btn btn-ghost btn-sm" onClick={() => setExpandedSubCategory(x => x === `${g.categoryId}-${sc.name}` ? null : `${g.categoryId}-${sc.name}`)}>
+                            {expandedSubCategory === `${g.categoryId}-${sc.name}` ? "Hide Transactions" : "View Transactions"} ({sc.items.length})
+                          </button>
+                        </div>
+                      </div>
+
+                      {expandedSubCategory === `${g.categoryId}-${sc.name}` && (
+                        <div className="table-wrap" style={{ marginTop: 10, marginBottom: 0 }}>
+                          <table>
+                            <thead>
+                              <tr>
+                                <th>Date</th>
+                                <th>Description / Paid To</th>
+                                <th>Funding</th>
+                                <th className="r">Gross Cost</th>
+                                <th className="r">Net Book Value</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {sc.items.sort((a, b) => (b.date || "").localeCompare(a.date || "")).map(item => (
+                                <tr key={item.id}>
+                                  <td className="mono" style={{ fontSize: 11, color: "var(--text3)" }}>{item.date}</td>
+                                  <td style={{ fontWeight: 600 }}>{item.description} <span style={{ color: "var(--text3)", fontWeight: 400 }}>({item.paidTo})</span></td>
+                                  <td><BadgeComponent type={item.fundedBy === "loan" ? "amber" : "green"}>{item.fundedBy}{item.paidByPartner ? ` (${item.paidByPartner})` : ""}</BadgeComponent></td>
+                                  <td className="r mono" style={{ fontWeight: 700 }}>{fmt(item.amount)}</td>
+                                  <td className="r mono" style={{ color: "var(--teal)", fontWeight: 700 }}>{fmt(item.netBookValue)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
@@ -1661,7 +1683,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
             </FG>
           </div>
           <div className="form-row cols-2">
-            <FG label="Sub-Category / Asset Type"><input placeholder="e.g. Transformer / Ball Mill Shell / Boundary Wall" value={f.subCategory} onChange={e => set("subCategory")(e.target.value)} /></FG>
+            <FG label="Sub-Category / Group Name"><input placeholder="e.g. Transformer / Boundary Wall / Vendor Name" value={f.subCategory} onChange={e => set("subCategory")(e.target.value)} /></FG>
             <FG label="Total Cost / Value (₹) *"><input type="number" value={f.amount} onChange={e => set("amount")(e.target.value)} /></FG>
           </div>
           <div className="form-row cols-3">
@@ -1680,7 +1702,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
             </FG>
             <FG label="Paid By Partner (If out of pocket)"><input placeholder="Partner Name" value={f.paidByPartner} onChange={e => set("paidByPartner")(e.target.value)} /></FG>
           </div>
-          <div className="form-row"><FG label="Asset Description *"><input placeholder="e.g. 250KVA Transformer installation or Shed Construction Advance" value={f.description} onChange={e => set("description")(e.target.value)} /></FG></div>
+          <div className="form-row"><FG label="Asset Description *"><input placeholder="e.g. 250KVA Transformer installation advance" value={f.description} onChange={e => set("description")(e.target.value)} /></FG></div>
           <div className="form-row cols-2">
             <FG label="Paid To / Vendor Name"><input value={f.paidTo} onChange={e => set("paidTo")(e.target.value)} /></FG>
             <FG label="Registry / Invoice Ref"><input value={f.reference} onChange={e => set("reference")(e.target.value)} /></FG>
