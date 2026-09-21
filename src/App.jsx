@@ -1816,7 +1816,7 @@ function BankStatementGroupingView({ bankBatches, setBankBatches, bankTxns, setB
             const capitalPayload = {
               date: t.date || t.txn_date,
               category: cat,
-              subCategory: "Bank Auto-Routed",
+              subCategory: patch.label || t.key, // Uses the bank statement group name as sub-category
               description: t.description,
               amount: t.debit,
               paidTo: patch.label || t.key,
@@ -1825,12 +1825,14 @@ function BankStatementGroupingView({ bankBatches, setBankBatches, bankTxns, setB
               reference: "",
               paidByPartner: ""
             };
+
+            // Permanently save to the database storage
             const savedItem = await db.saveCapitalItem(capitalPayload);
             setCapitalItems(cs => [savedItem, ...cs]);
             existingDescriptions.add(uniqueKey);
           }
         }
-        alert("Counterparty mapped to Capital Assets and saved permanently!");
+        alert("Counterparty mapped to Capital Assets and saved permanently to the database!");
       }
     } catch (err) { alert(err.message); }
   }
