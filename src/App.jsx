@@ -1450,7 +1450,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
     } catch (err) { alert(err.message); }
   }
 
-  const allCapitalRows = useMemo(() => {
+ const allCapitalRows = useMemo(() => {
     const list = [];
     const currentDate = new Date();
 
@@ -1483,7 +1483,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
       });
     });
 
-    // 2. Process bank transactions using the exact unified labeling logic from the Bank Statement / Expenses tab
+    // 2. Process bank transactions using the EXACT custom label from bankLabels if available
     (bankTxns || []).forEach(t => {
       if (!t || !t.debit || t.debit <= 0) return;
       const k = t.key || t.group_key || (t.description ? normalizeDesc(t.description) : "UNKNOWN");
@@ -1491,6 +1491,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
       const type = meta.type || "unlabeled";
 
       if (type.startsWith("capital_")) {
+        // Look up custom user-assigned label first, exactly like the expenses ledger
         const customLabel = meta.label && meta.label.trim() ? meta.label.trim() : "";
         const cleanNormName = normalizeDesc(t.description);
         const vendorName = customLabel || cleanNormName;
@@ -1511,7 +1512,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
         list.push({
           id: `bank-${t.id}`,
           category: cat,
-          vendorName: vendorName,
+          vendorName: vendorName, // Uses the custom group name you typed in Bank Statement!
           date: t.date || t.txn_date,
           description: t.description,
           paidTo: vendorName,
