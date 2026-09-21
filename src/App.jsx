@@ -1455,7 +1455,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
     const list = [];
     const currentDate = new Date();
 
-    // 1. Process manual entries
+    // 1. Process manual entries (fallback to paidTo or description if subCategory is empty/General)
     (capitalItems || []).forEach(c => {
       if (!c) return;
       const catConfig = CAP_CATS.find(x => x.id === (c.category || "machinery")) || { defaultRate: 15 };
@@ -1466,12 +1466,18 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
       const originalAmount = +c.amount || 0;
       const netBookValue = rate === 0 ? originalAmount : Math.max(0, originalAmount * Math.pow(1 - rate, ageYears));
 
+      // Determine an intelligent sub-category name if none was provided
+      let subCatName = c.subCategory;
+      if (!subCatName || subCatName === "General" || subCatName === "Bank Auto-Routed") {
+        subCatName = c.paidTo && c.paidTo.trim() !== "—" ? c.paidTo : (c.description || "Direct Capital Asset");
+      }
+
       list.push({
         id: `manual-${c.id}`,
         capNo: c.capNo || "CAP-M",
         date: c.date,
         category: c.category || "machinery",
-        subCategory: c.subCategory || "General",
+        subCategory: subCatName,
         description: c.description,
         paidTo: c.paidTo || "—",
         paymentMode: c.paymentMode || "bank",
@@ -1483,7 +1489,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
       });
     });
 
-    // 2. Process bank statement transactions using the assigned group label as sub-category
+    // 2. Process bank statement transactions using the assigned bank group name
     (bankTxns || []).forEach(t => {
       if (!t || !t.debit || t.debit <= 0) return;
       const k = t.key || t.group_key || (t.description ? normalizeDesc(t.description) : "UNKNOWN");
@@ -1491,9 +1497,8 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
       const type = meta.type || "unlabeled";
 
       if (type.startsWith("capital_")) {
-        // This grabs the custom name you entered in "Name this group" (e.g. "Land") 
-        // falling back to the raw counterparty key if no custom name is set yet.
-        const customGroupName = (meta.label && meta.label.trim()) ? meta.label.trim() : k;
+        // Grabs the custom group name from the Bank Statement tab (e.g., "Land" or "Mateshwari Industries")
+        const bankGroupName = (meta.label && meta.label.trim()) ? meta.label.trim() : k;
 
         let cat = "machinery";
         if (type === "capital_land") cat = "land";
@@ -1513,9 +1518,9 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
           capNo: "CAP-B",
           date: t.date || t.txn_date,
           category: cat,
-          subCategory: customGroupName, // Uses your exact bank statement group name as the sub-category!
+          subCategory: bankGroupName, // Maps directly to your bank group name!
           description: t.description,
-          paidTo: customGroupName,
+          paidTo: bankGroupName,
           paymentMode: "bank",
           fundedBy: "own",
           paidByPartner: "",
