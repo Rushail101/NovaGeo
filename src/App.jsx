@@ -1450,7 +1450,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
     } catch (err) { alert(err.message); }
   }
 
-    const allCapitalRows = useMemo(() => {
+  const allCapitalRows = useMemo(() => {
     const list = [];
     const currentDate = new Date();
 
@@ -1537,6 +1537,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
     return list.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
   }, [capitalItems, bankTxns, bankLabels]);
 
+  // Group by category, then by the unified label (same merge rule as Bank Statement tab)
   const categoryGroups = useMemo(() => {
     const map = {};
     CAP_CATS.forEach(c => {
@@ -1561,40 +1562,6 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
     return Object.values(map)
       .filter(g => g.totalCost > 0)
       .map(g => ({ ...g, vendors: Object.values(g.vendorsMap).sort((a, b) => b.totalCost - a.totalCost) }))
-      .sort((a, b) => b.totalCost - a.totalCost);
-  }, [allCapitalRows]);
-
-  // Group by category, then group completely by the unified vendorName/label
-  const categoryGroups = useMemo(() => {
-    const map = {};
-    CAP_CATS.forEach(c => {
-      map[c.id] = { categoryId: c.id, label: c.label, totalCost: 0, totalNBV: 0, vendorsMap: {} };
-    });
-
-    allCapitalRows.forEach(item => {
-      const cat = item.category || "other";
-      if (!map[cat]) {
-        map[cat] = { categoryId: cat, label: cat.toUpperCase(), totalCost: 0, totalNBV: 0, vendorsMap: {} };
-      }
-      map[cat].totalCost += item.amount;
-      map[cat].totalNBV += item.netBookValue;
-
-      const vName = (item.vendorName || "General").trim();
-      const vKey = vName.toLowerCase();
-      if (!map[cat].vendorsMap[vKey]) {
-        map[cat].vendorsMap[vKey] = { vendorKey: `${cat}-${vKey}`, vendorName: vName, totalCost: 0, totalNBV: 0, txns: [] };
-      }
-      map[cat].vendorsMap[vKey].totalCost += item.amount;
-      map[cat].vendorsMap[vKey].totalNBV += item.netBookValue;
-      map[cat].vendorsMap[vKey].txns.push(item);
-    });
-
-    return Object.values(map)
-      .filter(g => g.totalCost > 0)
-      .map(g => ({
-        ...g,
-        vendors: Object.values(g.vendorsMap).sort((a, b) => b.totalCost - a.totalCost)
-      }))
       .sort((a, b) => b.totalCost - a.totalCost);
   }, [allCapitalRows]);
 
