@@ -1422,8 +1422,7 @@ function ExpensesView({ expenses, setExpenses, bankTxns, bankLabels }) {
 
 function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabels }) {
   const [open, setOpen] = useState(false);
-  const [expandedCategory, setExpandedCategory] = useState(null);
-  const [expandedSubCategory, setExpandedSubCategory] = useState(null);
+  const [expandedVendor, setExpandedVendor] = useState(null);
   const [search, setSearch] = useState("");
 
   const blank = { date: today(), category: "machinery", subCategory: "", description: "", amount: "", paidTo: "", reference: "", fundedBy: "own", paymentMode: "bank", paidByPartner: "" };
@@ -1436,7 +1435,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
       const payload = {
         date: f.date,
         category: f.category,
-        subCategory: f.subCategory || "General",
+        subCategory: f.subCategory || f.paidTo || "General Asset",
         description: f.description,
         amount: +f.amount,
         paidTo: f.paidTo,
@@ -1466,12 +1465,13 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
       const originalAmount = +c.amount || 0;
       const netBookValue = rate === 0 ? originalAmount : Math.max(0, originalAmount * Math.pow(1 - rate, ageYears));
 
+      const vendorName = c.subCategory && c.subCategory !== "General" ? c.subCategory : (c.paidTo && c.paidTo !== "—" ? c.paidTo : (c.description || "Direct Asset"));
+
       list.push({
         id: `manual-${c.id}`,
-        capNo: c.capNo || "CAP-M",
-        date: c.date,
         category: c.category || "machinery",
-        subCategory: c.subCategory && c.subCategory !== "General" ? c.subCategory : (c.paidTo || "Direct Entry"),
+        vendorName: vendorName,
+        date: c.date,
         description: c.description,
         paidTo: c.paidTo || "—",
         paymentMode: c.paymentMode || "bank",
@@ -1483,7 +1483,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
       });
     });
 
-    // 2. Process bank statement transactions grouped by your assigned Bank Group label
+    // 2. Process bank statement transactions grouped by Bank Statement Group Label
     (bankTxns || []).forEach(t => {
       if (!t || !t.debit || t.debit <= 0) return;
       const k = t.key || t.group_key || (t.description ? normalizeDesc(t.description) : "UNKNOWN");
@@ -1491,9 +1491,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
       const type = meta.type || "unlabeled";
 
       if (type.startsWith("capital_")) {
-        // This explicitly uses your custom group name from the Bank Statement tab.
-        // If you haven't named the group yet, it groups them under their normalized counterparty name.
-        const groupName = (meta.label && meta.label.trim()) ? meta.label.trim() : k;
+        const vendorName = (meta.label && meta.label.trim()) ? meta.label.trim() : k;
 
         let cat = "machinery";
         if (type === "capital_land") cat = "land";
@@ -1510,12 +1508,11 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
 
         list.push({
           id: `bank-${t.id}`,
-          capNo: "CAP-B",
-          date: t.date || t.txn_date,
           category: cat,
-          subCategory: groupName, // Unified under your bank group name!
+          vendorName: vendorName,
+          date: t.date || t.txn_date,
           description: t.description,
-          paidTo: groupName,
+          paidTo: vendorName,
           paymentMode: "bank",
           fundedBy: "own",
           paidByPartner: "",
@@ -1529,42 +1526,42 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
     return list.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
   }, [capitalItems, bankTxns, bankLabels]);
 
+  // Group vendors within their respective categories
   const categoryGroups = useMemo(() => {
     const map = {};
     CAP_CATS.forEach(c => {
-      map[c.id] = { categoryId: c.id, label: c.label, total: 0, netBookVal: 0, subCategoriesMap: {}, items: [] };
+      map[c.id] = { categoryId: c.id, label: c.label, totalCost: 0, totalNBV: 0, vendorsMap: {} };
     });
 
     allCapitalRows.forEach(item => {
       const cat = item.category || "other";
       if (!map[cat]) {
-        map[cat] = { categoryId: cat, label: cat.toUpperCase(), total: 0, netBookVal: 0, subCategoriesMap: {}, items: [] };
+        map[cat] = { categoryId: cat, label: cat.toUpperCase(), totalCost: 0, totalNBV: 0, vendorsMap: {} };
       }
-      map[cat].total += item.amount;
-      map[cat].netBookVal += item.netBookValue;
-      map[cat].items.push(item);
+      map[cat].totalCost += item.amount;
+      map[cat].totalNBV += item.netBookValue;
 
-      const subCatName = item.subCategory || "General";
-      if (!map[cat].subCategoriesMap[subCatName]) {
-        map[cat].subCategoriesMap[subCatName] = { name: subCatName, total: 0, netBookVal: 0, items: [] };
+      const vName = item.vendorName || "General";
+      if (!map[cat].vendorsMap[vName]) {
+        map[cat].vendorsMap[vName] = { vendorKey: `${cat}-${vName}`, vendorName: vName, totalCost: 0, totalNBV: 0, txns: [] };
       }
-      map[cat].subCategoriesMap[subCatName].total += item.amount;
-      map[cat].subCategoriesMap[subCatName].netBookVal += item.netBookValue;
-      map[cat].subCategoriesMap[subCatName].items.push(item);
+      map[cat].vendorsMap[vName].totalCost += item.amount;
+      map[cat].vendorsMap[vName].totalNBV += item.netBookValue;
+      map[cat].vendorsMap[vName].txns.push(item);
     });
 
     return Object.values(map)
-      .filter(g => g.total > 0)
+      .filter(g => g.totalCost > 0)
       .map(g => ({
         ...g,
-        subCategories: Object.values(g.subCategoriesMap).sort((a, b) => b.total - a.total)
+        vendors: Object.values(g.vendorsMap).sort((a, b) => b.totalCost - a.totalCost)
       }))
-      .sort((a, b) => b.total - a.total);
+      .sort((a, b) => b.totalCost - a.totalCost);
   }, [allCapitalRows]);
 
   const filteredGroups = categoryGroups.filter(g => {
     if (!search) return true;
-    return g.label.toLowerCase().includes(search.toLowerCase()) || g.subCategories.some(sc => sc.name.toLowerCase().includes(search.toLowerCase()) || sc.items.some(i => i.description.toLowerCase().includes(search.toLowerCase())));
+    return g.label.toLowerCase().includes(search.toLowerCase()) || g.vendors.some(v => v.vendorName.toLowerCase().includes(search.toLowerCase()) || v.txns.some(t => t.description.toLowerCase().includes(search.toLowerCase())));
   });
 
   const totalCapexAll = allCapitalRows.reduce((s, c) => s + c.amount, 0);
@@ -1589,89 +1586,79 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
 
       <div className="filter-bar">
         <input
-          placeholder="Search category, sub-category, or description…"
+          placeholder="Search asset block, vendor, or description…"
           value={search}
           onChange={e => setSearch(e.target.value)}
           style={{ background: "var(--bg3)", border: "1px solid var(--border2)", borderRadius: "var(--r)", padding: "7px 11px", color: "var(--text)", fontSize: 12.5, minWidth: 280 }}
         />
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
         {filteredGroups.length === 0 ? (
           <div className="config-card" style={{ textAlign: "center", padding: 32 }}>
             <EmptyState icon="🏗" message="No capital assets found" sub="Add fixed assets manually or tag bank statement groups." />
           </div>
         ) : (
           filteredGroups.map(g => (
-            <div key={g.categoryId} className="config-card" style={{ padding: 14 }}>
-              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end", justifyContent: "space-between" }}>
+            <div key={g.categoryId} className="config-card" style={{ padding: 16 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid var(--border)", paddingBottom: 10, marginBottom: 12 }}>
                 <div>
-                  <div style={{ fontSize: 11, color: "var(--text3)", fontFamily: "var(--mono)", textTransform: "uppercase" }}>Asset Block</div>
-                  <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text)", marginTop: 2 }}>{g.label}</div>
+                  <div style={{ fontSize: 10, color: "var(--text3)", fontFamily: "var(--mono)", textTransform: "uppercase" }}>Asset Block</div>
+                  <div style={{ fontSize: 16, fontWeight: 700, color: "var(--text)", marginTop: 2 }}>{g.label}</div>
                 </div>
-                <div style={{ display: "flex", gap: 18, fontFamily: "var(--mono)", fontSize: 12.5 }}>
-                  <div><div style={{ color: "var(--text3)", fontSize: 10 }}>GROSS COST</div><div style={{ color: "var(--accent)", fontWeight: 700 }}>{fmt(g.total)}</div></div>
-                  <div><div style={{ color: "var(--text3)", fontSize: 10 }}>NET BOOK VALUE</div><div style={{ color: "var(--teal)", fontWeight: 700 }}>{fmt(g.netBookVal)}</div></div>
-                  <div><div style={{ color: "var(--text3)", fontSize: 10 }}>GROUPS</div><div style={{ fontWeight: 700 }}>{g.subCategories.length}</div></div>
+                <div style={{ display: "flex", gap: 16, fontFamily: "var(--mono)", fontSize: 12 }}>
+                  <div>Gross Cost: <span style={{ color: "var(--accent)", fontWeight: 700 }}>{fmt(g.totalCost)}</span></div>
+                  <div>Net Book Value: <span style={{ color: "var(--teal)", fontWeight: 700 }}>{fmt(g.totalNBV)}</span></div>
                 </div>
               </div>
 
-              <div style={{ marginTop: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ fontSize: 11, color: "var(--text3)", fontFamily: "var(--mono)" }}>
-                  Depreciation Rate: {CAP_CATS.find(c => c.id === g.categoryId)?.defaultRate || 0}% p.a.
-                </span>
-                <button className="btn btn-ghost btn-sm" onClick={() => setExpandedCategory(x => x === g.categoryId ? null : g.categoryId)}>
-                  {expandedCategory === g.categoryId ? "Hide Sub-Categories" : "View Sub-Categories"} ({g.subCategories.length})
-                </button>
-              </div>
-
-              {expandedCategory === g.categoryId && (
-                <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
-                  {g.subCategories.map(sc => (
-                    <div key={sc.name} style={{ background: "var(--bg3)", border: "1px solid var(--border)", borderRadius: "var(--r)", padding: 12 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                        <div>
-                          <span className="badge badge-accent" style={{ marginRight: 8 }}>Sub-Group</span>
-                          <strong style={{ fontSize: 13, color: "var(--text)" }}>{sc.name}</strong>
-                        </div>
-                        <div style={{ display: "flex", gap: 16, fontFamily: "var(--mono)", fontSize: 12, alignItems: "center" }}>
-                          <div>Cost: <span style={{ color: "var(--accent)", fontWeight: 700 }}>{fmt(sc.total)}</span></div>
-                          <button className="btn btn-ghost btn-sm" onClick={() => setExpandedSubCategory(x => x === `${g.categoryId}-${sc.name}` ? null : `${g.categoryId}-${sc.name}`)}>
-                            {expandedSubCategory === `${g.categoryId}-${sc.name}` ? "Hide Transactions" : "View Transactions"} ({sc.items.length})
-                          </button>
-                        </div>
+              {/* Vendor Cards listed directly like the Expenses tab */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {g.vendors.map(v => (
+                  <div key={v.vendorKey} style={{ background: "var(--bg3)", border: "1px solid var(--border)", borderRadius: "var(--r)", padding: 14 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 10 }}>
+                      <div>
+                        <div style={{ fontSize: 10, color: "var(--text3)", fontFamily: "var(--mono)", textTransform: "uppercase" }}>Vendor / Counterparty</div>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text)", marginTop: 2 }}>{v.vendorName}</div>
                       </div>
-
-                      {expandedSubCategory === `${g.categoryId}-${sc.name}` && (
-                        <div className="table-wrap" style={{ marginTop: 10, marginBottom: 0 }}>
-                          <table>
-                            <thead>
-                              <tr>
-                                <th>Date</th>
-                                <th>Description / Paid To</th>
-                                <th>Funding</th>
-                                <th className="r">Gross Cost</th>
-                                <th className="r">Net Book Value</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {sc.items.sort((a, b) => (b.date || "").localeCompare(a.date || "")).map(item => (
-                                <tr key={item.id}>
-                                  <td className="mono" style={{ fontSize: 11, color: "var(--text3)" }}>{item.date}</td>
-                                  <td style={{ fontWeight: 600 }}>{item.description} <span style={{ color: "var(--text3)", fontWeight: 400 }}>({item.paidTo})</span></td>
-                                  <td><BadgeComponent type={item.fundedBy === "loan" ? "amber" : "green"}>{item.fundedBy}{item.paidByPartner ? ` (${item.paidByPartner})` : ""}</BadgeComponent></td>
-                                  <td className="r mono" style={{ fontWeight: 700 }}>{fmt(item.amount)}</td>
-                                  <td className="r mono" style={{ color: "var(--teal)", fontWeight: 700 }}>{fmt(item.netBookValue)}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
+                      <div style={{ display: "flex", gap: 16, fontFamily: "var(--mono)", fontSize: 12, alignItems: "center" }}>
+                        <div>PAID: <span style={{ color: "var(--accent)", fontWeight: 700 }}>{fmt(v.totalCost)}</span></div>
+                        <div>NET VALUE: <span style={{ color: "var(--teal)", fontWeight: 700 }}>{fmt(v.totalNBV)}</span></div>
+                        <button className="btn btn-ghost btn-sm" onClick={() => setExpandedVendor(x => x === v.vendorKey ? null : v.vendorKey)}>
+                          {expandedVendor === v.vendorKey ? `Hide transactions (${v.txns.length})` : `View transactions (${v.txns.length})`}
+                        </button>
+                      </div>
                     </div>
-                  ))}
-                </div>
-              )}
+
+                    {expandedVendor === v.vendorKey && (
+                      <div className="table-wrap" style={{ marginTop: 12, marginBottom: 0 }}>
+                        <table>
+                          <thead>
+                            <tr>
+                              <th>Date</th>
+                              <th>Narration / Description</th>
+                              <th>Source</th>
+                              <th className="r">Amount</th>
+                              <th className="r">Net Book Value</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {v.txns.sort((a, b) => (b.date || "").localeCompare(a.date || "")).map(t => (
+                              <tr key={t.id}>
+                                <td className="mono" style={{ fontSize: 11, color: "var(--text3)" }}>{t.date}</td>
+                                <td style={{ fontSize: 12 }}>{t.description}</td>
+                                <td><BadgeComponent type={t.source === "Bank Statement" ? "blue" : "accent"}>{t.source}</BadgeComponent></td>
+                                <td className="r mono" style={{ fontWeight: 700 }}>{fmt(t.amount)}</td>
+                                <td className="r mono" style={{ color: "var(--teal)", fontWeight: 700 }}>{fmt(t.netBookValue)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
           ))
         )}
@@ -1688,7 +1675,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
             </FG>
           </div>
           <div className="form-row cols-2">
-            <FG label="Sub-Category / Group Name"><input placeholder="e.g. Transformer / Boundary Wall / Vendor Name" value={f.subCategory} onChange={e => set("subCategory")(e.target.value)} /></FG>
+            <FG label="Vendor / Group Name"><input placeholder="e.g. Mateshwari Industries / Shree Power" value={f.subCategory} onChange={e => set("subCategory")(e.target.value)} /></FG>
             <FG label="Total Cost / Value (₹) *"><input type="number" value={f.amount} onChange={e => set("amount")(e.target.value)} /></FG>
           </div>
           <div className="form-row cols-3">
