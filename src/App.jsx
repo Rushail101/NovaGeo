@@ -1450,81 +1450,119 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
     } catch (err) { alert(err.message); }
   }
 
-  const allCapitalRows = useMemo(() => {
+    const allCapitalRows = useMemo(() => {
     const list = [];
     const currentDate = new Date();
 
-    // 1. Process manual entries
+    const catFromType = (type) => {
+      if (type === "capital_land") return "land";
+      if (type === "capital_electrical") return "electrical";
+      if (type === "capital_vehicles") return "vehicle";
+      return "machinery";
+    };
+
+    // Same grouping identity as the Bank Statement tab
+    const bankMeta = (t) => {
+      const k = t.key || t.group_key || (t.description ? normalizeDesc(t.description) : "UNKNOWN");
+      const meta = (bankLabels || {})[k] || {};
+      const label = (meta.label || "").trim();
+      return {
+        k,
+        type: meta.type || "unlabeled",
+        mergeKey: label ? label.toLowerCase() : `__raw__${k}`,
+        name: label || k,
+      };
+    };
+
+    const nbv = (amount, cat, date) => {
+      const rate = (CAP_CATS.find(x => x.id === cat)?.defaultRate ?? 15) / 100;
+      const ageYears = Math.max(0, (currentDate - new Date(date || today())) / (1000 * 60 * 60 * 24 * 365.25));
+      return rate === 0 ? amount : Math.max(0, amount * Math.pow(1 - rate, ageYears));
+    };
+
+    // Index capital-tagged bank debits by description+amount
+    const bankCapital = new Map();
+    (bankTxns || []).forEach(t => {
+      if (!t || !t.debit || t.debit <= 0) return;
+      const m = bankMeta(t);
+      if (!m.type.startsWith("capital_")) return;
+      bankCapital.set(`${t.description}-${t.debit}`, { t, m });
+    });
+
+    const matched = new Set();
+
+    // 1. Manual entries (if one mirrors a bank txn, take its live group + category)
     (capitalItems || []).forEach(c => {
       if (!c) return;
-      const catConfig = CAP_CATS.find(x => x.id === (c.category || "machinery")) || { defaultRate: 15 };
-      const rate = catConfig.defaultRate / 100;
-      
-      const acqDate = new Date(c.date || today());
-      const ageYears = Math.max(0, (currentDate - acqDate) / (1000 * 60 * 60 * 24 * 365.25));
-      const originalAmount = +c.amount || 0;
-      const netBookValue = rate === 0 ? originalAmount : Math.max(0, originalAmount * Math.pow(1 - rate, ageYears));
+      const amount = +c.amount || 0;
+      const link = bankCapital.get(`${c.description}-${amount}`);
+      let cat = c.category || "machinery";
+      let vendorName, mergeKey;
 
-      const vendorName = c.subCategory && c.subCategory !== "General" ? c.subCategory : (c.paidTo && c.paidTo !== "—" ? c.paidTo : (c.description || "Direct Asset"));
+      if (link) {
+        matched.add(`${c.description}-${amount}`);
+        cat = catFromType(link.m.type);
+        vendorName = link.m.name;
+        mergeKey = link.m.mergeKey;
+      } else {
+        vendorName = c.subCategory && c.subCategory !== "General"
+          ? c.subCategory
+          : (c.paidTo && c.paidTo !== "—" ? c.paidTo : (c.description || "Direct Asset"));
+        mergeKey = vendorName.trim().toLowerCase();
+      }
 
       list.push({
-        id: `manual-${c.id}`,
-        category: c.category || "machinery",
-        vendorName: vendorName,
-        date: c.date,
-        description: c.description,
-        paidTo: c.paidTo || "—",
-        paymentMode: c.paymentMode || "bank",
-        fundedBy: c.fundedBy || "own",
-        paidByPartner: c.paidByPartner || "",
-        amount: originalAmount,
-        netBookValue,
-        source: "Manual"
+        id: `manual-${c.id}`, category: cat, vendorName, mergeKey,
+        date: c.date, description: c.description, paidTo: c.paidTo || "—",
+        paymentMode: c.paymentMode || "bank", fundedBy: c.fundedBy || "own",
+        paidByPartner: c.paidByPartner || "", amount,
+        netBookValue: nbv(amount, cat, c.date), source: "Manual",
       });
     });
 
-    // 2. Process bank transactions based on their assigned bankLabel category type
-    (bankTxns || []).forEach(t => {
-      if (!t || !t.debit || t.debit <= 0) return;
-      const k = t.key || t.group_key || (t.description ? normalizeDesc(t.description) : "UNKNOWN");
-      const meta = (bankLabels || {})[k] || {};
-      const type = meta.type || "unlabeled";
-
-      if (type.startsWith("capital_")) {
-        const customLabel = meta.label && meta.label.trim() ? meta.label.trim() : normalizeDesc(t.description);
-
-        let cat = "machinery";
-        if (type === "capital_land") cat = "land";
-        else if (type === "capital_electrical") cat = "electrical";
-        else if (type === "capital_vehicles") cat = "vehicle";
-
-        const catConfig = CAP_CATS.find(x => x.id === cat) || { defaultRate: 15 };
-        const rate = catConfig.defaultRate / 100;
-
-        const acqDate = new Date(t.date || t.txn_date || today());
-        const ageYears = Math.max(0, (currentDate - acqDate) / (1000 * 60 * 60 * 24 * 365.25));
-        const originalAmount = +t.debit || 0;
-        const netBookValue = rate === 0 ? originalAmount : Math.max(0, originalAmount * Math.pow(1 - rate, ageYears));
-
-        list.push({
-          id: `bank-${t.id}`,
-          category: cat,
-          vendorName: customLabel,
-          date: t.date || t.txn_date,
-          description: t.description,
-          paidTo: customLabel,
-          paymentMode: "bank",
-          fundedBy: "own",
-          paidByPartner: "",
-          amount: originalAmount,
-          netBookValue,
-          source: "Bank Statement"
-        });
-      }
+    // 2. Bank rows not already represented by a manual copy
+    bankCapital.forEach(({ t, m }, uniqueKey) => {
+      if (matched.has(uniqueKey)) return;
+      const cat = catFromType(m.type);
+      const amount = +t.debit || 0;
+      const date = t.date || t.txn_date;
+      list.push({
+        id: `bank-${t.id}`, category: cat, vendorName: m.name, mergeKey: m.mergeKey,
+        date, description: t.description, paidTo: m.name, paymentMode: "bank",
+        fundedBy: "own", paidByPartner: "", amount,
+        netBookValue: nbv(amount, cat, date), source: "Bank Statement",
+      });
     });
 
     return list.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
   }, [capitalItems, bankTxns, bankLabels]);
+
+  const categoryGroups = useMemo(() => {
+    const map = {};
+    CAP_CATS.forEach(c => {
+      map[c.id] = { categoryId: c.id, label: c.label, totalCost: 0, totalNBV: 0, vendorsMap: {} };
+    });
+
+    allCapitalRows.forEach(item => {
+      const cat = item.category || "other";
+      if (!map[cat]) map[cat] = { categoryId: cat, label: cat.toUpperCase(), totalCost: 0, totalNBV: 0, vendorsMap: {} };
+      map[cat].totalCost += item.amount;
+      map[cat].totalNBV += item.netBookValue;
+
+      const vKey = item.mergeKey;
+      if (!map[cat].vendorsMap[vKey]) {
+        map[cat].vendorsMap[vKey] = { vendorKey: `${cat}-${vKey}`, vendorName: item.vendorName, totalCost: 0, totalNBV: 0, txns: [] };
+      }
+      map[cat].vendorsMap[vKey].totalCost += item.amount;
+      map[cat].vendorsMap[vKey].totalNBV += item.netBookValue;
+      map[cat].vendorsMap[vKey].txns.push(item);
+    });
+
+    return Object.values(map)
+      .filter(g => g.totalCost > 0)
+      .map(g => ({ ...g, vendors: Object.values(g.vendorsMap).sort((a, b) => b.totalCost - a.totalCost) }))
+      .sort((a, b) => b.totalCost - a.totalCost);
+  }, [allCapitalRows]);
 
   // Group by category, then group completely by the unified vendorName/label
   const categoryGroups = useMemo(() => {
