@@ -1455,7 +1455,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
     const list = [];
     const currentDate = new Date();
 
-    // 1. Process manual entries (fallback to paidTo or description if subCategory is empty/General)
+    // 1. Process manual entries
     (capitalItems || []).forEach(c => {
       if (!c) return;
       const catConfig = CAP_CATS.find(x => x.id === (c.category || "machinery")) || { defaultRate: 15 };
@@ -1466,7 +1466,6 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
       const originalAmount = +c.amount || 0;
       const netBookValue = rate === 0 ? originalAmount : Math.max(0, originalAmount * Math.pow(1 - rate, ageYears));
 
-      // Determine an intelligent sub-category name if none was provided
       let subCatName = c.subCategory;
       if (!subCatName || subCatName === "General" || subCatName === "Bank Auto-Routed") {
         subCatName = c.paidTo && c.paidTo.trim() !== "—" ? c.paidTo : (c.description || "Direct Capital Asset");
@@ -1489,7 +1488,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
       });
     });
 
-    // 2. Process bank statement transactions using the assigned bank group name
+    // 2. Process bank statement transactions strictly mapped to their Bank Group Label
     (bankTxns || []).forEach(t => {
       if (!t || !t.debit || t.debit <= 0) return;
       const k = t.key || t.group_key || (t.description ? normalizeDesc(t.description) : "UNKNOWN");
@@ -1497,8 +1496,10 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
       const type = meta.type || "unlabeled";
 
       if (type.startsWith("capital_")) {
-        // Grabs the custom group name from the Bank Statement tab (e.g., "Land" or "Mateshwari Industries")
-        const bankGroupName = (meta.label && meta.label.trim()) ? meta.label.trim() : k;
+        // STRICT CHECK: Use the custom bank group name if assigned, otherwise use the normalized group key
+        // This ensures variations like "RTGS DR MATESHWARI..." and "NEFT DR MATESHWARI..." 
+        // merge into one sub-group under their custom group label!
+        const groupName = (meta.label && meta.label.trim()) ? meta.label.trim() : k;
 
         let cat = "machinery";
         if (type === "capital_land") cat = "land";
@@ -1518,9 +1519,9 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
           capNo: "CAP-B",
           date: t.date || t.txn_date,
           category: cat,
-          subCategory: bankGroupName, // Maps directly to your bank group name!
+          subCategory: groupName, // Unified under the exact group label
           description: t.description,
-          paidTo: bankGroupName,
+          paidTo: groupName,
           paymentMode: "bank",
           fundedBy: "own",
           paidByPartner: "",
