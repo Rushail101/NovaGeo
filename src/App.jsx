@@ -1450,7 +1450,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
     } catch (err) { alert(err.message); }
   }
 
- const allCapitalRows = useMemo(() => {
+  const allCapitalRows = useMemo(() => {
     const list = [];
     const currentDate = new Date();
 
@@ -1483,7 +1483,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
       });
     });
 
-    // 2. Process bank transactions using the EXACT custom label from bankLabels if available
+    // 2. Process bank transactions based on their assigned bankLabel category type
     (bankTxns || []).forEach(t => {
       if (!t || !t.debit || t.debit <= 0) return;
       const k = t.key || t.group_key || (t.description ? normalizeDesc(t.description) : "UNKNOWN");
@@ -1491,10 +1491,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
       const type = meta.type || "unlabeled";
 
       if (type.startsWith("capital_")) {
-        // Look up custom user-assigned label first, exactly like the expenses ledger
-        const customLabel = meta.label && meta.label.trim() ? meta.label.trim() : "";
-        const cleanNormName = normalizeDesc(t.description);
-        const vendorName = customLabel || cleanNormName;
+        const customLabel = meta.label && meta.label.trim() ? meta.label.trim() : normalizeDesc(t.description);
 
         let cat = "machinery";
         if (type === "capital_land") cat = "land";
@@ -1512,10 +1509,10 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
         list.push({
           id: `bank-${t.id}`,
           category: cat,
-          vendorName: vendorName, // Uses the custom group name you typed in Bank Statement!
+          vendorName: customLabel,
           date: t.date || t.txn_date,
           description: t.description,
-          paidTo: vendorName,
+          paidTo: customLabel,
           paymentMode: "bank",
           fundedBy: "own",
           paidByPartner: "",
@@ -1529,7 +1526,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
     return list.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
   }, [capitalItems, bankTxns, bankLabels]);
 
-  // Group vendors within their respective categories using unified vendorName keys
+  // Group by category, then group completely by the unified vendorName/label
   const categoryGroups = useMemo(() => {
     const map = {};
     CAP_CATS.forEach(c => {
@@ -1544,7 +1541,6 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
       map[cat].totalCost += item.amount;
       map[cat].totalNBV += item.netBookValue;
 
-      // Group by the normalized/custom-labeled vendor name so transactions under the same counterparty merge together
       const vName = (item.vendorName || "General").trim();
       const vKey = vName.toLowerCase();
       if (!map[cat].vendorsMap[vKey]) {
