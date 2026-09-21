@@ -1465,7 +1465,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
       const originalAmount = +c.amount || 0;
       const netBookValue = rate === 0 ? originalAmount : Math.max(0, originalAmount * Math.pow(1 - rate, ageYears));
 
-      const vendorName = c.subCategory && c.subCategory !== "General" ? c.subCategory : (c.paidTo && c.paidTo !== "—" ? c.paidTo : (c.description || "Direct Asset"));
+      let vendorName = c.subCategory && c.subCategory !== "General" ? c.subCategory : (c.paidTo && c.paidTo !== "—" ? c.paidTo : (c.description || "Direct Asset"));
 
       list.push({
         id: `manual-${c.id}`,
@@ -1483,7 +1483,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
       });
     });
 
-    // 2. Process bank statement transactions grouped by Bank Statement Group Label
+    // 2. Process bank statement transactions strictly mapped to the assigned Group Label
     (bankTxns || []).forEach(t => {
       if (!t || !t.debit || t.debit <= 0) return;
       const k = t.key || t.group_key || (t.description ? normalizeDesc(t.description) : "UNKNOWN");
@@ -1491,6 +1491,8 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
       const type = meta.type || "unlabeled";
 
       if (type.startsWith("capital_")) {
+        // STRICT GROUPING: If you named the group in the Bank Statement tab (meta.label), 
+        // use that exact name so all variation rows merge into one clean vendor card!
         const vendorName = (meta.label && meta.label.trim()) ? meta.label.trim() : k;
 
         let cat = "machinery";
@@ -1509,7 +1511,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
         list.push({
           id: `bank-${t.id}`,
           category: cat,
-          vendorName: vendorName,
+          vendorName: vendorName, // Automatically unifies under "MEENAKSHI ENTERPRIS"
           date: t.date || t.txn_date,
           description: t.description,
           paidTo: vendorName,
