@@ -1471,7 +1471,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
         capNo: c.capNo || "CAP-M",
         date: c.date,
         category: c.category || "machinery",
-        subCategory: c.subCategory && c.subCategory !== "General" && c.subCategory !== "Bank Auto-Routed" ? c.subCategory : (c.paidTo || "Manual Entry"),
+        subCategory: c.subCategory || "General",
         description: c.description,
         paidTo: c.paidTo || "—",
         paymentMode: c.paymentMode || "bank",
@@ -1483,7 +1483,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
       });
     });
 
-    // 2. Process bank statement auto-routed transactions using live bankLabels mapping
+    // 2. Process bank statement transactions using the assigned group label as sub-category
     (bankTxns || []).forEach(t => {
       if (!t || !t.debit || t.debit <= 0) return;
       const k = t.key || t.group_key || (t.description ? normalizeDesc(t.description) : "UNKNOWN");
@@ -1491,7 +1491,10 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
       const type = meta.type || "unlabeled";
 
       if (type.startsWith("capital_")) {
-        const groupName = (meta.label && meta.label.trim()) ? meta.label.trim() : k;
+        // This grabs the custom name you entered in "Name this group" (e.g. "Land") 
+        // falling back to the raw counterparty key if no custom name is set yet.
+        const customGroupName = (meta.label && meta.label.trim()) ? meta.label.trim() : k;
+
         let cat = "machinery";
         if (type === "capital_land") cat = "land";
         else if (type === "capital_electrical") cat = "electrical";
@@ -1510,9 +1513,9 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
           capNo: "CAP-B",
           date: t.date || t.txn_date,
           category: cat,
-          subCategory: groupName, // Automatically uses the exact Bank Statement group name!
+          subCategory: customGroupName, // Uses your exact bank statement group name as the sub-category!
           description: t.description,
-          paidTo: groupName,
+          paidTo: customGroupName,
           paymentMode: "bank",
           fundedBy: "own",
           paidByPartner: "",
