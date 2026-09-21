@@ -1483,7 +1483,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
       });
     });
 
-    // 2. Process bank transactions using the exact unified labeling logic from the Expenses tab
+    // 2. Process bank transactions using the exact unified labeling logic from the Bank Statement / Expenses tab
     (bankTxns || []).forEach(t => {
       if (!t || !t.debit || t.debit <= 0) return;
       const k = t.key || t.group_key || (t.description ? normalizeDesc(t.description) : "UNKNOWN");
@@ -1491,8 +1491,6 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
       const type = meta.type || "unlabeled";
 
       if (type.startsWith("capital_")) {
-        // EXACT EXPENSES TAB MATCH: If a custom label exists, use it. Otherwise, look for any group match, 
-        // falling back to the cleaned normalized description so variations group together properly.
         const customLabel = meta.label && meta.label.trim() ? meta.label.trim() : "";
         const cleanNormName = normalizeDesc(t.description);
         const vendorName = customLabel || cleanNormName;
@@ -1513,7 +1511,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
         list.push({
           id: `bank-${t.id}`,
           category: cat,
-          vendorName: vendorName, // Unifies cleanly just like the expenses ledger
+          vendorName: vendorName,
           date: t.date || t.txn_date,
           description: t.description,
           paidTo: vendorName,
@@ -1530,7 +1528,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
     return list.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
   }, [capitalItems, bankTxns, bankLabels]);
 
-  // Group vendors within their respective categories
+  // Group vendors within their respective categories using unified vendorName keys
   const categoryGroups = useMemo(() => {
     const map = {};
     CAP_CATS.forEach(c => {
@@ -1545,13 +1543,15 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
       map[cat].totalCost += item.amount;
       map[cat].totalNBV += item.netBookValue;
 
-      const vName = item.vendorName || "General";
-      if (!map[cat].vendorsMap[vName]) {
-        map[cat].vendorsMap[vName] = { vendorKey: `${cat}-${vName}`, vendorName: vName, totalCost: 0, totalNBV: 0, txns: [] };
+      // Group by the normalized/custom-labeled vendor name so transactions under the same counterparty merge together
+      const vName = (item.vendorName || "General").trim();
+      const vKey = vName.toLowerCase();
+      if (!map[cat].vendorsMap[vKey]) {
+        map[cat].vendorsMap[vKey] = { vendorKey: `${cat}-${vKey}`, vendorName: vName, totalCost: 0, totalNBV: 0, txns: [] };
       }
-      map[cat].vendorsMap[vName].totalCost += item.amount;
-      map[cat].vendorsMap[vName].totalNBV += item.netBookValue;
-      map[cat].vendorsMap[vName].txns.push(item);
+      map[cat].vendorsMap[vKey].totalCost += item.amount;
+      map[cat].vendorsMap[vKey].totalNBV += item.netBookValue;
+      map[cat].vendorsMap[vKey].txns.push(item);
     });
 
     return Object.values(map)
@@ -1616,7 +1616,6 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
                 </div>
               </div>
 
-              {/* Vendor Cards listed directly like the Expenses tab */}
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {g.vendors.map(v => (
                   <div key={v.vendorKey} style={{ background: "var(--bg3)", border: "1px solid var(--border)", borderRadius: "var(--r)", padding: 14 }}>
