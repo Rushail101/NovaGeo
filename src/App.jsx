@@ -1198,9 +1198,9 @@ function ExpensesView({ expenses, setExpenses, bankTxns, bankLabels }) {
       if (cpType === "owner") return;
 
       const groupKey = vendorName.toLowerCase();
-      if (!map[groupKey]) {
-        map[groupKey] = {
-          groupKey,
+      if (!map[bankLabels]) {
+        map[bankLabels] = {
+          bankLabels,
           vendorName,
           type: cpType,
           totalPaid: 0,
@@ -1208,8 +1208,8 @@ function ExpensesView({ expenses, setExpenses, bankTxns, bankLabels }) {
           txns: []
         };
       }
-      map[groupKey].totalPaid += (+t.debit || 0);
-      map[groupKey].txns.push({
+      map[bankLabels].totalPaid += (+t.debit || 0);
+      map[bankLabels].txns.push({
         id: `bank-${t.id}`,
         date: t.date || t.txn_date,
         description: t.description,
