@@ -2527,35 +2527,85 @@ function CostConfigView({ costConfig, setCostConfig }) {
   );
 }
 
-// ── MASTER TABLE HELPER ──────────────────────────────────────────────────────
+// ── MASTER TABLE HELPER WITH EDIT & DELETE SUPPORT ───────────────────────────
 function MasterTableView({ title, noun, items, setItems, saveFn, delFn, fields, cols }) {
   const blank = Object.fromEntries(fields.map(f => [f.key, ""]));
   const [open, setOpen] = useState(false);
   const [f, setF] = useState(blank);
+  const [editingId, setEditingId] = useState(null);
   const set = k => v => setF(x => ({ ...x, [k]: v }));
+
+  function openAdd() {
+    setEditingId(null);
+    setF(blank);
+    setOpen(true);
+  }
+
+  function openEdit(item) {
+    setEditingId(item.id);
+    setF(item);
+    setOpen(true);
+  }
 
   async function save() {
     try {
-      const res = await saveFn(f);
-      setItems(xs => [...xs, res]);
-      setOpen(false); setF(blank);
+      const payload = editingId ? { ...f, id: editingId } : f;
+      const res = await saveFn(payload);
+      if (editingId) {
+        setItems(xs => xs.map(x => x.id === editingId ? res : x));
+      } else {
+        setItems(xs => [...xs, res]);
+      }
+      setOpen(false); setF(blank); setEditingId(null);
+    } catch (err) { alert(err.message); }
+  }
+
+  async function remove(id) {
+    if (!confirm(`Are you sure you want to delete this ${noun}?`)) return;
+    try {
+      if (delFn) await delFn(id);
+      setItems(xs => xs.filter(x => x.id !== id));
     } catch (err) { alert(err.message); }
   }
 
   return (
     <div>
-      <div className="filter-bar"><button className="btn btn-primary" onClick={() => setOpen(true)}>+ Add {noun}</button></div>
+      <div className="filter-bar"><button className="btn btn-primary" onClick={openAdd}>+ Add {noun}</button></div>
       <div className="table-wrap">
         <table>
-          <thead><tr>{cols.map(c => <th key={c.label}>{c.label}</th>)}</tr></thead>
+          <thead>
+            <tr>
+              {cols.map(c => <th key={c.label}>{c.label}</th>)}
+              <th className="r">Actions</th>
+            </tr>
+          </thead>
           <tbody>
-            {(items || []).map(row => <tr key={row.id}>{cols.map(c => <td key={c.label}>{row[c.key]}</td>)}</tr>)}
+            {(items || []).length === 0 ? (
+              <tr><td colSpan={cols.length + 1} style={{ textAlign: "center", color: "var(--text3)", padding: 24 }}>No {noun.toLowerCase()} records found</td></tr>
+            ) : (
+              (items || []).map(row => (
+                <tr key={row.id}>
+                  {cols.map(c => <td key={c.label}>{row[c.key] || "—"}</td>)}
+                  <td className="r">
+                    <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                      <button className="btn btn-ghost btn-sm" onClick={() => openEdit(row)}>Edit</button>
+                      {delFn && <button className="btn btn-danger btn-sm" onClick={() => remove(row.id)}>Delete</button>}
+                    </div>
+                  </td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>
+
       {open && (
-        <Modal title={`New ${noun}`} onClose={() => setOpen(false)} foot={<><button className="btn btn-ghost" onClick={() => setOpen(false)}>Cancel</button><button className="btn btn-primary" onClick={save}>Save</button></>}>
-          {fields.map(fl => <FG key={fl.key} label={fl.label} span={fl.full ? 2 : undefined}><input value={f[fl.key] || ""} onChange={e => set(fl.key)(e.target.value)} /></FG>)}
+        <Modal title={`${editingId ? "Edit" : "New"} ${noun}`} onClose={() => { setOpen(false); setEditingId(null); }} foot={<><button className="btn btn-ghost" onClick={() => { setOpen(false); setEditingId(null); }}>Cancel</button><button className="btn btn-primary" onClick={save}>Save {noun}</button></>}>
+          {fields.map(fl => (
+            <FG key={fl.key} label={fl.label} span={fl.full ? 2 : undefined}>
+              <input value={f[fl.key] !== undefined ? f[fl.key] : ""} onChange={e => set(fl.key)(e.target.value)} />
+            </FG>
+          ))}
         </Modal>
       )}
     </div>
