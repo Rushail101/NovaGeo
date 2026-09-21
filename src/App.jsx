@@ -1455,6 +1455,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
     const list = [];
     const currentDate = new Date();
 
+    // 1. Process manual entries
     (capitalItems || []).forEach(c => {
       if (!c) return;
       const catConfig = CAP_CATS.find(x => x.id === (c.category || "machinery")) || { defaultRate: 15 };
@@ -1470,7 +1471,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
         capNo: c.capNo || "CAP-M",
         date: c.date,
         category: c.category || "machinery",
-        subCategory: c.subCategory || "General",
+        subCategory: c.subCategory && c.subCategory !== "General" && c.subCategory !== "Bank Auto-Routed" ? c.subCategory : (c.paidTo || "Manual Entry"),
         description: c.description,
         paidTo: c.paidTo || "—",
         paymentMode: c.paymentMode || "bank",
@@ -1482,6 +1483,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
       });
     });
 
+    // 2. Process bank statement auto-routed transactions using live bankLabels mapping
     (bankTxns || []).forEach(t => {
       if (!t || !t.debit || t.debit <= 0) return;
       const k = t.key || t.group_key || (t.description ? normalizeDesc(t.description) : "UNKNOWN");
@@ -1489,7 +1491,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
       const type = meta.type || "unlabeled";
 
       if (type.startsWith("capital_")) {
-        const vendorName = (meta.label && meta.label.trim()) ? meta.label.trim() : k;
+        const groupName = (meta.label && meta.label.trim()) ? meta.label.trim() : k;
         let cat = "machinery";
         if (type === "capital_land") cat = "land";
         else if (type === "capital_electrical") cat = "electrical";
@@ -1508,9 +1510,9 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
           capNo: "CAP-B",
           date: t.date || t.txn_date,
           category: cat,
-          subCategory: vendorName,
+          subCategory: groupName, // Automatically uses the exact Bank Statement group name!
           description: t.description,
-          paidTo: vendorName,
+          paidTo: groupName,
           paymentMode: "bank",
           fundedBy: "own",
           paidByPartner: "",
