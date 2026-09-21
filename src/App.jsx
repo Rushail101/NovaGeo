@@ -1466,17 +1466,12 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
       const originalAmount = +c.amount || 0;
       const netBookValue = rate === 0 ? originalAmount : Math.max(0, originalAmount * Math.pow(1 - rate, ageYears));
 
-      let subCatName = c.subCategory;
-      if (!subCatName || subCatName === "General" || subCatName === "Bank Auto-Routed") {
-        subCatName = c.paidTo && c.paidTo.trim() !== "—" ? c.paidTo : (c.description || "Direct Capital Asset");
-      }
-
       list.push({
         id: `manual-${c.id}`,
         capNo: c.capNo || "CAP-M",
         date: c.date,
         category: c.category || "machinery",
-        subCategory: subCatName,
+        subCategory: c.subCategory && c.subCategory !== "General" ? c.subCategory : (c.paidTo || "Direct Entry"),
         description: c.description,
         paidTo: c.paidTo || "—",
         paymentMode: c.paymentMode || "bank",
@@ -1488,7 +1483,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
       });
     });
 
-    // 2. Process bank statement transactions strictly mapped to their Bank Group Label
+    // 2. Process bank statement transactions grouped by your assigned Bank Group label
     (bankTxns || []).forEach(t => {
       if (!t || !t.debit || t.debit <= 0) return;
       const k = t.key || t.group_key || (t.description ? normalizeDesc(t.description) : "UNKNOWN");
@@ -1496,9 +1491,8 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
       const type = meta.type || "unlabeled";
 
       if (type.startsWith("capital_")) {
-        // STRICT CHECK: Use the custom bank group name if assigned, otherwise use the normalized group key
-        // This ensures variations like "RTGS DR MATESHWARI..." and "NEFT DR MATESHWARI..." 
-        // merge into one sub-group under their custom group label!
+        // This explicitly uses your custom group name from the Bank Statement tab.
+        // If you haven't named the group yet, it groups them under their normalized counterparty name.
         const groupName = (meta.label && meta.label.trim()) ? meta.label.trim() : k;
 
         let cat = "machinery";
@@ -1519,7 +1513,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
           capNo: "CAP-B",
           date: t.date || t.txn_date,
           category: cat,
-          subCategory: groupName, // Unified under the exact group label
+          subCategory: groupName, // Unified under your bank group name!
           description: t.description,
           paidTo: groupName,
           paymentMode: "bank",
