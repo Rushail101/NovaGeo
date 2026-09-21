@@ -1454,90 +1454,80 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
     const list = [];
     const currentDate = new Date();
 
-    const catFromType = (type) => {
-      if (type === "capital_land") return "land";
-      if (type === "capital_electrical") return "electrical";
-      if (type === "capital_vehicles") return "vehicle";
-      return "machinery";
-    };
-
-    // Same grouping identity as the Bank Statement tab
-    const bankMeta = (t) => {
-      const k = t.key || t.group_key || (t.description ? normalizeDesc(t.description) : "UNKNOWN");
-      const meta = (bankLabels || {})[k] || {};
-      const label = (meta.label || "").trim();
-      return {
-        k,
-        type: meta.type || "unlabeled",
-        mergeKey: label ? label.toLowerCase() : `__raw__${k}`,
-        name: label || k,
-      };
-    };
-
-    const nbv = (amount, cat, date) => {
-      const rate = (CAP_CATS.find(x => x.id === cat)?.defaultRate ?? 15) / 100;
-      const ageYears = Math.max(0, (currentDate - new Date(date || today())) / (1000 * 60 * 60 * 24 * 365.25));
-      return rate === 0 ? amount : Math.max(0, amount * Math.pow(1 - rate, ageYears));
-    };
-
-    // Index capital-tagged bank debits by description+amount
-    const bankCapital = new Map();
-    (bankTxns || []).forEach(t => {
-      if (!t || !t.debit || t.debit <= 0) return;
-      const m = bankMeta(t);
-      if (!m.type.startsWith("capital_")) return;
-      bankCapital.set(`${t.description}-${t.debit}`, { t, m });
-    });
-
-    const matched = new Set();
-
-    // 1. Manual entries (if one mirrors a bank txn, take its live group + category)
+    // 1. Process manual entries
     (capitalItems || []).forEach(c => {
       if (!c) return;
-      const amount = +c.amount || 0;
-      const link = bankCapital.get(`${c.description}-${amount}`);
-      let cat = c.category || "machinery";
-      let vendorName, mergeKey;
+      const catConfig = CAP_CATS.find(x => x.id === (c.category || "machinery")) || { defaultRate: 15 };
+      const rate = catConfig.defaultRate / 100;
+      
+      const acqDate = new Date(c.date || today());
+      const ageYears = Math.max(0, (currentDate - acqDate) / (1000 * 60 * 60 * 24 * 365.25));
+      const originalAmount = +c.amount || 0;
+      const netBookValue = rate === 0 ? originalAmount : Math.max(0, originalAmount * Math.pow(1 - rate, ageYears));
 
-      if (link) {
-        matched.add(`${c.description}-${amount}`);
-        cat = catFromType(link.m.type);
-        vendorName = link.m.name;
-        mergeKey = link.m.mergeKey;
-      } else {
-        vendorName = c.subCategory && c.subCategory !== "General"
-          ? c.subCategory
-          : (c.paidTo && c.paidTo !== "—" ? c.paidTo : (c.description || "Direct Asset"));
-        mergeKey = vendorName.trim().toLowerCase();
-      }
+      const vendorName = c.subCategory && c.subCategory !== "General" ? c.subCategory : (c.paidTo && c.paidTo !== "—" ? c.paidTo : (c.description || "Direct Asset"));
 
       list.push({
-        id: `manual-${c.id}`, category: cat, vendorName, mergeKey,
-        date: c.date, description: c.description, paidTo: c.paidTo || "—",
-        paymentMode: c.paymentMode || "bank", fundedBy: c.fundedBy || "own",
-        paidByPartner: c.paidByPartner || "", amount,
-        netBookValue: nbv(amount, cat, c.date), source: "Manual",
+        id: `manual-${c.id}`,
+        category: c.category || "machinery",
+        vendorName: vendorName,
+        date: c.date,
+        description: c.description,
+        paidTo: c.paidTo || "—",
+        paymentMode: c.paymentMode || "bank",
+        fundedBy: c.fundedBy || "own",
+        paidByPartner: c.paidByPartner || "",
+        amount: originalAmount,
+        netBookValue,
+        source: "Manual"
       });
     });
 
-    // 2. Bank rows not already represented by a manual copy
-    bankCapital.forEach(({ t, m }, uniqueKey) => {
-      if (matched.has(uniqueKey)) return;
-      const cat = catFromType(m.type);
-      const amount = +t.debit || 0;
-      const date = t.date || t.txn_date;
-      list.push({
-        id: `bank-${t.id}`, category: cat, vendorName: m.name, mergeKey: m.mergeKey,
-        date, description: t.description, paidTo: m.name, paymentMode: "bank",
-        fundedBy: "own", paidByPartner: "", amount,
-        netBookValue: nbv(amount, cat, date), source: "Bank Statement",
-      });
+    // 2. Process bank transactions using database labels to unify different group_keys under the same label name
+    (bankTxns || []).forEach(t => {
+      if (!t || !t.debit || t.debit <= 0) return;
+      const k = t.key || t.group_key || (t.description ? normalizeDesc(t.description) : "UNKNOWN");
+      const meta = (bankLabels || {})[k] || {};
+      const type = meta.type || "unlabeled";
+
+      if (type.startsWith("capital_")) {
+        // Resolve the unified label from database. If a label exists, use it to merge items together.
+        const assignedLabel = meta.label && meta.label.trim() ? meta.label.trim() : normalizeDesc(t.description);
+
+        let cat = "machinery";
+        if (type === "capital_land") cat = "land";
+        else if (type === "capital_electrical") cat = "electrical";
+        else if (type === "capital_vehicles") cat = "vehicle";
+
+        const catConfig = CAP_CATS.find(x => x.id === cat) || { defaultRate: 15 };
+        const rate = catConfig.defaultRate / 100;
+
+        const acqDate = new Date(t.date || t.txn_date || today());
+        const ageYears = Math.max(0, (currentDate - acqDate) / (1000 * 60 * 60 * 24 * 365.25));
+        const originalAmount = +t.debit || 0;
+        const netBookValue = rate === 0 ? originalAmount : Math.max(0, originalAmount * Math.pow(1 - rate, ageYears));
+
+        list.push({
+          id: `bank-${t.id}`,
+          category: cat,
+          vendorName: assignedLabel, // This groups all differing group_keys sharing this label into one card!
+          date: t.date || t.txn_date,
+          description: t.description,
+          paidTo: assignedLabel,
+          paymentMode: "bank",
+          fundedBy: "own",
+          paidByPartner: "",
+          amount: originalAmount,
+          netBookValue,
+          source: "Bank Statement"
+        });
+      }
     });
 
     return list.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
   }, [capitalItems, bankTxns, bankLabels]);
 
-  // Group by category, then by the unified label (same merge rule as Bank Statement tab)
+  // Group by category, then merge all items sharing the exact same uppercase/lowercase vendorName label string
   const categoryGroups = useMemo(() => {
     const map = {};
     CAP_CATS.forEach(c => {
@@ -1546,13 +1536,16 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
 
     allCapitalRows.forEach(item => {
       const cat = item.category || "other";
-      if (!map[cat]) map[cat] = { categoryId: cat, label: cat.toUpperCase(), totalCost: 0, totalNBV: 0, vendorsMap: {} };
+      if (!map[cat]) {
+        map[cat] = { categoryId: cat, label: cat.toUpperCase(), totalCost: 0, totalNBV: 0, vendorsMap: {} };
+      }
       map[cat].totalCost += item.amount;
       map[cat].totalNBV += item.netBookValue;
 
-      const vKey = item.mergeKey;
+      const vName = (item.vendorName || "General").trim();
+      const vKey = vName.toLowerCase(); // Merges different group_keys that share the identical label string
       if (!map[cat].vendorsMap[vKey]) {
-        map[cat].vendorsMap[vKey] = { vendorKey: `${cat}-${vKey}`, vendorName: item.vendorName, totalCost: 0, totalNBV: 0, txns: [] };
+        map[cat].vendorsMap[vKey] = { vendorKey: `${cat}-${vKey}`, vendorName: vName, totalCost: 0, totalNBV: 0, txns: [] };
       }
       map[cat].vendorsMap[vKey].totalCost += item.amount;
       map[cat].vendorsMap[vKey].totalNBV += item.netBookValue;
@@ -1561,7 +1554,10 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
 
     return Object.values(map)
       .filter(g => g.totalCost > 0)
-      .map(g => ({ ...g, vendors: Object.values(g.vendorsMap).sort((a, b) => b.totalCost - a.totalCost) }))
+      .map(g => ({
+        ...g,
+        vendors: Object.values(g.vendorsMap).sort((a, b) => b.totalCost - a.totalCost)
+      }))
       .sort((a, b) => b.totalCost - a.totalCost);
   }, [allCapitalRows]);
 
