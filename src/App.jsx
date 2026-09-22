@@ -1458,30 +1458,12 @@ function CapitalRegisterView({ capitalItems, bankTxns, bankLabels }) {
     const list = [];
     const currentDate = new Date();
 
-    // 1. Process manual entries from capital_items table
+    // EXCLUDE MANUAL ENTRIES COMPLETELY (Uncomment or remove this section to stop manual records from showing)
+    /* 
     (capitalItems || []).forEach(c => {
-      if (!c) return;
-      const catConfig = CAP_CATS.find(x => x.id === (c.category || "machinery")) || { defaultRate: 15 };
-      const rate = catConfig.defaultRate / 100;
-      
-      const acqDate = new Date(c.date || today());
-      const ageYears = Math.max(0, (currentDate - acqDate) / (1000 * 60 * 60 * 24 * 365.25));
-      const originalAmount = +c.amount || 0;
-      const netBookValue = rate === 0 ? originalAmount : Math.max(0, originalAmount * Math.pow(1 - rate, ageYears));
-
-      const parentLabel = (c.subCategory && c.subCategory !== "General" ? c.subCategory : (c.paidTo && c.paidTo !== "—" ? c.paidTo : (c.description || "Direct Asset"))).trim().toUpperCase();
-
-      list.push({
-        id: `manual-${c.id}`,
-        category: c.category || "machinery",
-        vendorName: parentLabel,
-        date: c.date,
-        description: c.description,
-        amount: originalAmount,
-        netBookValue,
-        source: "Manual"
-      });
-    });
+      ...
+    }); 
+    */
 
     // 2. Process Bank Transactions mapped via bank_labels
     (bankTxns || []).forEach(t => {
@@ -1520,7 +1502,7 @@ function CapitalRegisterView({ capitalItems, bankTxns, bankLabels }) {
     });
 
     return list.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
-  }, [capitalItems, bankTxns, bankLabels]);
+  }, [bankTxns, bankLabels]); // Removed capitalItems from dependencies since manual entries are bypassed
 
   // Group vendors directly by category -> Vendor Label name
   const categoryGroups = useMemo(() => {
