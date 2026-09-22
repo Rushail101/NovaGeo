@@ -1425,7 +1425,7 @@ function ExpensesView({ expenses, setExpenses, bankTxns, bankLabels }) {
 
 function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabels }) {
   const [open, setOpen] = useState(false);
-  const [expandedVendor, setExpandedVendor] = useState(null);
+  const [expandedParentVendor, setExpandedParentVendor] = useState(null);
   const [search, setSearch] = useState("");
 
   const blank = { date: today(), category: "machinery", subCategory: "", description: "", amount: "", paidTo: "", reference: "", fundedBy: "own", paymentMode: "bank", paidByPartner: "" };
@@ -1473,7 +1473,8 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
       list.push({
         id: `manual-${c.id}`,
         category: c.category || "machinery",
-        vendorName: vendorName,
+        parentLabel: vendorName.trim().toUpperCase(),
+        subGroupKey: "Manual Entry",
         date: c.date,
         description: c.description,
         paidTo: c.paidTo || "—",
@@ -1486,7 +1487,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
       });
     });
 
-    // 2. Process bank transactions using database labels to unify different group_keys under the same label name
+    // 2. Process bank transactions using database labels to unify different group_keys under a parent label
     (bankTxns || []).forEach(t => {
       if (!t || !t.debit || t.debit <= 0) return;
       const k = t.key || t.group_key || (t.description ? normalizeDesc(t.description) : "UNKNOWN");
@@ -1494,8 +1495,9 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
       const type = meta.type || "unlabeled";
 
       if (type.startsWith("capital_")) {
-        // Resolve the unified label from database so different group_keys with the same label merge together
-        const assignedLabel = meta.label && meta.label.trim() ? meta.label.trim() : normalizeDesc(t.description);
+        const customLabel = meta.label && meta.label.trim() ? meta.label.trim().toUpperCase() : "";
+        const rawSubGroup = normalizeDesc(t.description);
+        const parentLabel = customLabel || rawSubGroup;
 
         let cat = "machinery";
         if (type === "capital_land") cat = "land";
@@ -1513,10 +1515,11 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
         list.push({
           id: `bank-${t.id}`,
           category: cat,
-          vendorName: assignedLabel,
+          parentLabel: parentLabel,
+          subGroupKey: rawSubGroup, // Retains the specific bank narration variation as a sub-group
           date: t.date || t.txn_date,
           description: t.description,
-          paidTo: assignedLabel,
+          paidTo: parentLabel,
           paymentMode: "bank",
           fundedBy: "own",
           paidByPartner: "",
@@ -1530,43 +1533,54 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
     return list.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
   }, [capitalItems, bankTxns, bankLabels]);
 
-  // Group by category, then merge all items sharing the exact same label string (case-insensitive)
+  // Group by category -> Parent Label -> Sub-groups (raw narrations)
   const categoryGroups = useMemo(() => {
     const map = {};
     CAP_CATS.forEach(c => {
-      map[c.id] = { categoryId: c.id, label: c.label, totalCost: 0, totalNBV: 0, vendorsMap: {} };
+      map[c.id] = { categoryId: c.id, label: c.label, totalCost: 0, totalNBV: 0, parentsMap: {} };
     });
 
     allCapitalRows.forEach(item => {
       const cat = item.category || "other";
       if (!map[cat]) {
-        map[cat] = { categoryId: cat, label: cat.toUpperCase(), totalCost: 0, totalNBV: 0, vendorsMap: {} };
+        map[cat] = { categoryId: cat, label: cat.toUpperCase(), totalCost: 0, totalNBV: 0, parentsMap: {} };
       }
       map[cat].totalCost += item.amount;
       map[cat].totalNBV += item.netBookValue;
 
-      const vName = (item.vendorName || "General").trim();
-      const vKey = vName.toLowerCase(); 
-      if (!map[cat].vendorsMap[vKey]) {
-        map[cat].vendorsMap[vKey] = { vendorKey: `${cat}-${vKey}`, vendorName: vName, totalCost: 0, totalNBV: 0, txns: [] };
+      const pName = (item.parentLabel || "GENERAL").trim();
+      const pKey = pName.toLowerCase();
+      if (!map[cat].parentsMap[pKey]) {
+        map[cat].parentsMap[pKey] = { parentKey: `${cat}-${pKey}`, parentName: pName, totalCost: 0, totalNBV: 0, subGroupsMap: {}, txnsCount: 0 };
       }
-      map[cat].vendorsMap[vKey].totalCost += item.amount;
-      map[cat].vendorsMap[vKey].totalNBV += item.netBookValue;
-      map[cat].vendorsMap[vKey].txns.push(item);
+      map[cat].parentsMap[pKey].totalCost += item.amount;
+      map[cat].parentsMap[pKey].totalNBV += item.netBookValue;
+      map[cat].parentsMap[pKey].txnsCount += 1;
+
+      const subKey = (item.subGroupKey || "general").trim().toLowerCase();
+      if (!map[cat].parentsMap[pKey].subGroupsMap[subKey]) {
+        map[cat].parentsMap[pKey].subGroupsMap[subKey] = { subKey: `${cat}-${pKey}-${subKey}`, subName: item.subGroupKey, totalCost: 0, totalNBV: 0, txns: [] };
+      }
+      map[cat].parentsMap[pKey].subGroupsMap[subKey].totalCost += item.amount;
+      map[cat].parentsMap[pKey].subGroupsMap[subKey].totalNBV += item.netBookValue;
+      map[cat].parentsMap[pKey].subGroupsMap[subKey].txns.push(item);
     });
 
     return Object.values(map)
       .filter(g => g.totalCost > 0)
       .map(g => ({
         ...g,
-        vendors: Object.values(g.vendorsMap).sort((a, b) => b.totalCost - a.totalCost)
+        parents: Object.values(g.parentsMap).map(p => ({
+          ...p,
+          subGroups: Object.values(p.subGroupsMap).sort((a, b) => b.totalCost - a.totalCost)
+        })).sort((a, b) => b.totalCost - a.totalCost)
       }))
       .sort((a, b) => b.totalCost - a.totalCost);
   }, [allCapitalRows]);
 
   const filteredGroups = categoryGroups.filter(g => {
     if (!search) return true;
-    return g.label.toLowerCase().includes(search.toLowerCase()) || g.vendors.some(v => v.vendorName.toLowerCase().includes(search.toLowerCase()) || v.txns.some(t => t.description.toLowerCase().includes(search.toLowerCase())));
+    return g.label.toLowerCase().includes(search.toLowerCase()) || g.parents.some(p => p.parentName.toLowerCase().includes(search.toLowerCase()) || p.subGroups.some(sg => sg.subName.toLowerCase().includes(search.toLowerCase()) || sg.txns.some(t => t.description.toLowerCase().includes(search.toLowerCase()))));
   });
 
   const totalCapexAll = allCapitalRows.reduce((s, c) => s + c.amount, 0);
@@ -1618,46 +1632,56 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
               </div>
 
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                {g.vendors.map(v => (
-                  <div key={v.vendorKey} style={{ background: "var(--bg3)", border: "1px solid var(--border)", borderRadius: "var(--r)", padding: 14 }}>
+                {g.parents.map(p => (
+                  <div key={p.parentKey} style={{ background: "var(--bg3)", border: "1px solid var(--border)", borderRadius: "var(--r)", padding: 14 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 10 }}>
                       <div>
-                        <div style={{ fontSize: 10, color: "var(--text3)", fontFamily: "var(--mono)", textTransform: "uppercase" }}>Vendor / Counterparty</div>
-                        <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text)", marginTop: 2 }}>{v.vendorName}</div>
+                        <div style={{ fontSize: 10, color: "var(--text3)", fontFamily: "var(--mono)", textTransform: "uppercase" }}>Vendor / Counterparty Label</div>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text)", marginTop: 2 }}>{p.parentName}</div>
                       </div>
                       <div style={{ display: "flex", gap: 16, fontFamily: "var(--mono)", fontSize: 12, alignItems: "center" }}>
-                        <div>PAID: <span style={{ color: "var(--accent)", fontWeight: 700 }}>{fmt(v.totalCost)}</span></div>
-                        <div>NET VALUE: <span style={{ color: "var(--teal)", fontWeight: 700 }}>{fmt(v.totalNBV)}</span></div>
-                        <button className="btn btn-ghost btn-sm" onClick={() => setExpandedVendor(x => x === v.vendorKey ? null : v.vendorKey)}>
-                          {expandedVendor === v.vendorKey ? `Hide transactions (${v.txns.length})` : `View transactions (${v.txns.length})`}
+                        <div>PAID: <span style={{ color: "var(--accent)", fontWeight: 700 }}>{fmt(p.totalCost)}</span></div>
+                        <div>NET VALUE: <span style={{ color: "var(--teal)", fontWeight: 700 }}>{fmt(p.totalNBV)}</span></div>
+                        <button className="btn btn-ghost btn-sm" onClick={() => setExpandedParentVendor(x => x === p.parentKey ? null : p.parentKey)}>
+                          {expandedParentVendor === p.parentKey ? `Hide Sub-groups` : `View transactions (${p.txnsCount})`}
                         </button>
                       </div>
                     </div>
 
-                    {expandedVendor === v.vendorKey && (
-                      <div className="table-wrap" style={{ marginTop: 12, marginBottom: 0 }}>
-                        <table>
-                          <thead>
-                            <tr>
-                              <th>Date</th>
-                              <th>Narration / Description</th>
-                              <th>Source</th>
-                              <th className="r">Amount</th>
-                              <th className="r">Net Book Value</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {v.txns.sort((a, b) => (b.date || "").localeCompare(a.date || "")).map(t => (
-                              <tr key={t.id}>
-                                <td className="mono" style={{ fontSize: 11, color: "var(--text3)" }}>{t.date}</td>
-                                <td style={{ fontSize: 12 }}>{t.description}</td>
-                                <td><BadgeComponent type={t.source === "Bank Statement" ? "blue" : "accent"}>{t.source}</BadgeComponent></td>
-                                <td className="r mono" style={{ fontWeight: 700 }}>{fmt(t.amount)}</td>
-                                <td className="r mono" style={{ color: "var(--teal)", fontWeight: 700 }}>{fmt(t.netBookValue)}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                    {expandedParentVendor === p.parentKey && (
+                      <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 10, borderTop: "1px solid var(--border2)", paddingTop: 12 }}>
+                        {p.subGroups.map(sg => (
+                          <div key={sg.subKey} style={{ background: "var(--bg)", border: "1px solid var(--border2)", borderRadius: "var(--r)", padding: 12 }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                              <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text2)", fontFamily: "var(--mono)" }}>↳ Sub-group: {sg.subName}</span>
+                              <span style={{ fontSize: 12, fontFamily: "var(--mono)", color: "var(--accent)" }}>{fmt(sg.totalCost)} ({sg.txns.length} txns)</span>
+                            </div>
+                            <div className="table-wrap" style={{ marginBottom: 0 }}>
+                              <table>
+                                <thead>
+                                  <tr>
+                                    <th>Date</th>
+                                    <th>Narration / Description</th>
+                                    <th>Source</th>
+                                    <th className="r">Amount</th>
+                                    <th className="r">Net Book Value</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {sg.txns.sort((a, b) => (b.date || "").localeCompare(a.date || "")).map(t => (
+                                    <tr key={t.id}>
+                                      <td className="mono" style={{ fontSize: 11, color: "var(--text3)" }}>{t.date}</td>
+                                      <td style={{ fontSize: 12 }}>{t.description}</td>
+                                      <td><BadgeComponent type={t.source === "Bank Statement" ? "blue" : "accent"}>{t.source}</BadgeComponent></td>
+                                      <td className="r mono" style={{ fontWeight: 700 }}>{fmt(t.amount)}</td>
+                                      <td className="r mono" style={{ color: "var(--teal)", fontWeight: 700 }}>{fmt(t.netBookValue)}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     )}
                   </div>
