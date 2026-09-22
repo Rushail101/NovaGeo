@@ -1454,7 +1454,6 @@ function CapitalRegisterView({ capitalItems, bankTxns, bankLabels }) {
         id: `manual-${c.id}`,
         category: c.category || "machinery",
         parentLabel: parentLabel,
-        subGroupKey: "Manual Record",
         date: c.date,
         description: c.description,
         amount: originalAmount,
@@ -1474,7 +1473,6 @@ function CapitalRegisterView({ capitalItems, bankTxns, bankLabels }) {
       if (type.startsWith("capital_")) {
         // Use the assigned label (e.g., MEENAKSHI BUILD TECH) as the parent group name
         const parentLabel = (meta.label && meta.label.trim()) ? meta.label.trim().toUpperCase() : normalizeDesc(t.description);
-        const subGroupKey = normalizeDesc(t.description); // Specific bank narration variation
 
         let cat = "machinery";
         if (type === "capital_land") cat = "land";
@@ -1493,7 +1491,6 @@ function CapitalRegisterView({ capitalItems, bankTxns, bankLabels }) {
           id: `bank-${t.id}`,
           category: cat,
           parentLabel: parentLabel,
-          subGroupKey: subGroupKey,
           date: t.date || t.txn_date,
           description: t.description,
           amount: originalAmount,
@@ -1506,7 +1503,7 @@ function CapitalRegisterView({ capitalItems, bankTxns, bankLabels }) {
     return list.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
   }, [capitalItems, bankTxns, bankLabels]);
 
-  // Group by Category -> Parent Label -> Sub-groups
+  // Group by Category -> Parent Label (flat transaction list per vendor, no sub-groups)
   const categoryGroups = useMemo(() => {
     const map = {};
     CAP_CATS.forEach(c => {
@@ -1524,36 +1521,25 @@ function CapitalRegisterView({ capitalItems, bankTxns, bankLabels }) {
       const pName = (item.parentLabel || "GENERAL").trim();
       const pKey = pName.toLowerCase();
       if (!map[cat].parentsMap[pKey]) {
-        map[cat].parentsMap[pKey] = { parentKey: `${cat}-${pKey}`, parentName: pName, totalCost: 0, totalNBV: 0, subGroupsMap: {}, txnsCount: 0 };
+        map[cat].parentsMap[pKey] = { parentKey: `${cat}-${pKey}`, parentName: pName, totalCost: 0, totalNBV: 0, txns: [] };
       }
       map[cat].parentsMap[pKey].totalCost += item.amount;
       map[cat].parentsMap[pKey].totalNBV += item.netBookValue;
-      map[cat].parentsMap[pKey].txnsCount += 1;
-
-      const subKey = (item.subGroupKey || "general").trim().toLowerCase();
-      if (!map[cat].parentsMap[pKey].subGroupsMap[subKey]) {
-        map[cat].parentsMap[pKey].subGroupsMap[subKey] = { subKey: `${cat}-${pKey}-${subKey}`, subName: item.subGroupKey, totalCost: 0, totalNBV: 0, txns: [] };
-      }
-      map[cat].parentsMap[pKey].subGroupsMap[subKey].totalCost += item.amount;
-      map[cat].parentsMap[pKey].subGroupsMap[subKey].totalNBV += item.netBookValue;
-      map[cat].parentsMap[pKey].subGroupsMap[subKey].txns.push(item);
+      map[cat].parentsMap[pKey].txns.push(item);
     });
 
     return Object.values(map)
       .filter(g => g.totalCost > 0)
       .map(g => ({
         ...g,
-        parents: Object.values(g.parentsMap).map(p => ({
-          ...p,
-          subGroups: Object.values(p.subGroupsMap).sort((a, b) => b.totalCost - a.totalCost)
-        })).sort((a, b) => b.totalCost - a.totalCost)
+        parents: Object.values(g.parentsMap).sort((a, b) => b.totalCost - a.totalCost)
       }))
       .sort((a, b) => b.totalCost - a.totalCost);
   }, [allCapitalRows]);
 
   const filteredGroups = categoryGroups.filter(g => {
     if (!search) return true;
-    return g.label.toLowerCase().includes(search.toLowerCase()) || g.parents.some(p => p.parentName.toLowerCase().includes(search.toLowerCase()) || p.subGroups.some(sg => sg.subName.toLowerCase().includes(search.toLowerCase()) || sg.txns.some(t => t.description.toLowerCase().includes(search.toLowerCase()))));
+    return g.label.toLowerCase().includes(search.toLowerCase()) || g.parents.some(p => p.parentName.toLowerCase().includes(search.toLowerCase()) || p.txns.some(t => t.description.toLowerCase().includes(search.toLowerCase())));
   });
 
   const totalCapexAll = allCapitalRows.reduce((s, c) => s + c.amount, 0);
@@ -1616,45 +1602,35 @@ function CapitalRegisterView({ capitalItems, bankTxns, bankLabels }) {
                         <div>PAID: <span style={{ color: "var(--accent)", fontWeight: 700 }}>{fmt(p.totalCost)}</span></div>
                         <div>NET VALUE: <span style={{ color: "var(--teal)", fontWeight: 700 }}>{fmt(p.totalNBV)}</span></div>
                         <button className="btn btn-ghost btn-sm" onClick={() => setExpandedParentVendor(x => x === p.parentKey ? null : p.parentKey)}>
-                          {expandedParentVendor === p.parentKey ? `Hide Sub-groups` : `View transactions (${p.txnsCount})`}
+                          {expandedParentVendor === p.parentKey ? `Hide transactions` : `View transactions (${p.txns.length})`}
                         </button>
                       </div>
                     </div>
 
                     {expandedParentVendor === p.parentKey && (
-                      <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 10, borderTop: "1px solid var(--border2)", paddingTop: 12 }}>
-                        {p.subGroups.map(sg => (
-                          <div key={sg.subKey} style={{ background: "var(--bg)", border: "1px solid var(--border2)", borderRadius: "var(--r)", padding: 12 }}>
-                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                              <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text2)", fontFamily: "var(--mono)" }}>↳ Sub-group: {sg.subName}</span>
-                              <span style={{ fontSize: 12, fontFamily: "var(--mono)", color: "var(--accent)" }}>{fmt(sg.totalCost)} ({sg.txns.length} txns)</span>
-                            </div>
-                            <div className="table-wrap" style={{ marginBottom: 0 }}>
-                              <table>
-                                <thead>
-                                  <tr>
-                                    <th>Date</th>
-                                    <th>Narration / Description</th>
-                                    <th>Source</th>
-                                    <th className="r">Amount</th>
-                                    <th className="r">Net Book Value</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {sg.txns.sort((a, b) => (b.date || "").localeCompare(a.date || "")).map(t => (
-                                    <tr key={t.id}>
-                                      <td className="mono" style={{ fontSize: 11, color: "var(--text3)" }}>{t.date}</td>
-                                      <td style={{ fontSize: 12 }}>{t.description}</td>
-                                      <td><BadgeComponent type={t.source === "Bank Statement" ? "blue" : "accent"}>{t.source}</BadgeComponent></td>
-                                      <td className="r mono" style={{ fontWeight: 700 }}>{fmt(t.amount)}</td>
-                                      <td className="r mono" style={{ color: "var(--teal)", fontWeight: 700 }}>{fmt(t.netBookValue)}</td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            </div>
-                          </div>
-                        ))}
+                      <div className="table-wrap" style={{ marginTop: 14 }}>
+                        <table>
+                          <thead>
+                            <tr>
+                              <th>Date</th>
+                              <th>Narration / Description</th>
+                              <th>Source</th>
+                              <th className="r">Amount</th>
+                              <th className="r">Net Book Value</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {p.txns.sort((a, b) => (b.date || "").localeCompare(a.date || "")).map(t => (
+                              <tr key={t.id}>
+                                <td className="mono" style={{ fontSize: 11, color: "var(--text3)" }}>{t.date}</td>
+                                <td style={{ fontSize: 12 }}>{t.description}</td>
+                                <td><BadgeComponent type={t.source === "Bank Statement" ? "blue" : "accent"}>{t.source}</BadgeComponent></td>
+                                <td className="r mono" style={{ fontWeight: 700 }}>{fmt(t.amount)}</td>
+                                <td className="r mono" style={{ color: "var(--teal)", fontWeight: 700 }}>{fmt(t.netBookValue)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
                       </div>
                     )}
                   </div>
