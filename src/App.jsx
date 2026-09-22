@@ -1611,7 +1611,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
                                 <td className="mono" style={{ fontSize: 11, color: "var(--text3)" }}>{t.date}</td>
                                 <td style={{ fontSize: 12 }}>{t.description}</td>
                                 <td><BadgeComponent type={t.source === "Bank Statement" ? "blue" : "accent"}>{t.source}</BadgeComponent></td>
-                                <td className="r mono" style={{ fontWeight: 700 }}>{fmt(t.amount))</td>
+                                <td className="r mono" style={{ fontWeight: 700 }}>{fmt(t.amount)}</td>
                                 <td className="r mono" style={{ color: "var(--teal)", fontWeight: 700 }}>{fmt(t.netBookValue)}</td>
                               </tr>
                             ))}
