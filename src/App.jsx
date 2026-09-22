@@ -1494,7 +1494,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
       const type = meta.type || "unlabeled";
 
       if (type.startsWith("capital_")) {
-        // Resolve the unified label from database. If a label exists, use it to merge items together.
+        // Resolve the unified label from database so different group_keys with the same label merge together
         const assignedLabel = meta.label && meta.label.trim() ? meta.label.trim() : normalizeDesc(t.description);
 
         let cat = "machinery";
@@ -1513,7 +1513,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
         list.push({
           id: `bank-${t.id}`,
           category: cat,
-          vendorName: assignedLabel, // This groups all differing group_keys sharing this label into one card!
+          vendorName: assignedLabel,
           date: t.date || t.txn_date,
           description: t.description,
           paidTo: assignedLabel,
@@ -1530,7 +1530,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
     return list.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
   }, [capitalItems, bankTxns, bankLabels]);
 
-  // Group by category, then merge all items sharing the exact same uppercase/lowercase vendorName label string
+  // Group by category, then merge all items sharing the exact same label string (case-insensitive)
   const categoryGroups = useMemo(() => {
     const map = {};
     CAP_CATS.forEach(c => {
@@ -1546,7 +1546,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
       map[cat].totalNBV += item.netBookValue;
 
       const vName = (item.vendorName || "General").trim();
-      const vKey = vName.toLowerCase(); // Merges different group_keys that share the identical label string
+      const vKey = vName.toLowerCase(); 
       if (!map[cat].vendorsMap[vKey]) {
         map[cat].vendorsMap[vKey] = { vendorKey: `${cat}-${vKey}`, vendorName: vName, totalCost: 0, totalNBV: 0, txns: [] };
       }
