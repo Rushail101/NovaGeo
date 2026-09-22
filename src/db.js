@@ -263,13 +263,13 @@ export async function loadAll() {
     labType: t.lab_type, certNo: t.cert_no || '',
     result: t.result, remarks: t.remarks || '',
     params: {
-      whiteness:   t.whiteness   != null ? String(t.whiteness)   : '',
-      sio2:        t.sio2        != null ? String(t.sio2)        : '',
-      fe2o3:       t.fe2o3       != null ? String(t.fe2o3)       : '',
-      al2o3:       t.al2o3       != null ? String(t.al2o3)       : '',
-      moisture:    t.moisture    != null ? String(t.moisture)    : '',
-      loi:         t.loi         != null ? String(t.loi)         : '',
-      d50:         t.d50         != null ? String(t.d50)         : '',
+      whiteness:    t.whiteness    != null ? String(t.whiteness)    : '',
+      sio2:         t.sio2         != null ? String(t.sio2)         : '',
+      fe2o3:        t.fe2o3        != null ? String(t.fe2o3)        : '',
+      al2o3:        t.al2o3        != null ? String(t.al2o3)        : '',
+      moisture:     t.moisture     != null ? String(t.moisture)     : '',
+      loi:          t.loi          != null ? String(t.loi)          : '',
+      d50:          t.d50          != null ? String(t.d50)          : '',
       bulkDensity: t.bulk_density!= null ? String(t.bulk_density): '',
     },
   }));
@@ -706,8 +706,19 @@ export async function deleteBankBatch(batchId) {
 }
 
 export async function updateBankLabel(groupKey, patch) {
-  await supabase.from('bank_labels')
-    .upsert({ group_key: groupKey, ...patch, updated_at: new Date().toISOString() }, { onConflict: 'group_key' });
+  const row = {
+    group_key: groupKey,
+    ...(patch.label !== undefined ? { label: patch.label } : {}),
+    ...(patch.type !== undefined ? { type: patch.type } : {}),
+    ...(patch.targetCategory !== undefined ? { target_category: patch.targetCategory } : {}),
+    ...(patch.policy !== undefined ? { policy: patch.policy } : {}),
+    updated_at: new Date().toISOString()
+  };
+  const { error } = await supabase
+    .from('bank_labels')
+    .upsert(row, { onConflict: 'group_key' });
+
+  if (error) throw error;
 }
 
 export async function updateBankLabels(groupKeys, patch) {
@@ -761,12 +772,12 @@ export async function saveCostConfig(data) {
   const row = {
     id: 1,
     bag_cost_per_tonne:  +data.bagCostPerTonne  || 0,
-    freight_per_tonne:   +data.freightPerTonne  || 0,
-    loading_per_tonne:   +data.loadingPerTonne  || 0,
-    monthly_lab_cost:    +data.monthlyLabCost   || 0,
-    monthly_rent:        +data.monthlyRent      || 0,
-    misc_fixed:          +data.miscFixed        || 0,
-    std_selling_rate:    +data.stdSellingRate   || 0,
+    freight_per_tonne:   +data.freightPerTonne   || 0,
+    loading_per_tonne:   +data.loadingPerTonne   || 0,
+    monthly_lab_cost:    +data.monthlyLabCost    || 0,
+    monthly_rent:        +data.monthlyRent       || 0,
+    misc_fixed:          +data.miscFixed         || 0,
+    std_selling_rate:    +data.stdSellingRate    || 0,
   };
   await supabase.from('cost_config').upsert(row, { onConflict: 'id' });
 }
