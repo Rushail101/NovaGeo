@@ -1453,13 +1453,14 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
     } catch (err) { alert(err.message); }
   }
 
-  // Process ONLY the master capital_items table to avoid any duplication inflation
+  // Directly pull and aggregate capital-tagged groups from Bank Statement and Manual entries
   const allCapitalRows = useMemo(() => {
     const list = [];
     const currentDate = new Date();
 
+    // 1. Process manual entries
     (capitalItems || []).forEach(c => {
-      if (!c) return;
+      if (!c || c.bankTxnId) return; // Skip if already linked to a bank txn to prevent duplicates
       const catConfig = CAP_CATS.find(x => x.id === (c.category || "machinery")) || { defaultRate: 15 };
       const rate = catConfig.defaultRate / 100;
       
@@ -1471,23 +1472,56 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
       const vendorName = (c.subCategory && c.subCategory !== "General" ? c.subCategory : (c.paidTo && c.paidTo !== "—" ? c.paidTo : (c.description || "Direct Asset"))).trim();
 
       list.push({
-        id: `cap-${c.id}`,
+        id: `manual-${c.id}`,
         category: c.category || "machinery",
         vendorName: vendorName,
         date: c.date,
         description: c.description,
-        paidTo: c.paidTo || "—",
-        paymentMode: c.paymentMode || "bank",
-        fundedBy: c.fundedBy || "own",
-        paidByPartner: c.paidByPartner || "",
         amount: originalAmount,
         netBookValue,
-        source: c.bankTxnId ? "Bank Statement" : "Manual"
+        source: "Manual"
       });
     });
 
+    // 2. Process Bank Statement transactions tagged with capital types (capital_machinery, capital_land, etc.)
+    (bankTxns || []).forEach(t => {
+      if (!t || !t.debit || t.debit <= 0) return;
+      const k = t.key || t.group_key || (t.description ? normalizeDesc(t.description) : "UNKNOWN");
+      const meta = (bankLabels || {})[k] || {};
+      const type = meta.type || "unlabeled";
+
+      if (type.startsWith("capital_")) {
+        // Use the exact custom label set on the Bank Statement tab, or fallback to normalized description
+        const assignedLabel = (meta.label && meta.label.trim()) ? meta.label.trim() : normalizeDesc(t.description);
+
+        let cat = "machinery";
+        if (type === "capital_land") cat = "land";
+        else if (type === "capital_electrical") cat = "electrical";
+        else if (type === "capital_vehicles") cat = "vehicle";
+
+        const catConfig = CAP_CATS.find(x => x.id === cat) || { defaultRate: 15 };
+        const rate = catConfig.defaultRate / 100;
+
+        const acqDate = new Date(t.date || t.txn_date || today());
+        const ageYears = Math.max(0, (currentDate - acqDate) / (1000 * 60 * 60 * 24 * 365.25));
+        const originalAmount = +t.debit || 0;
+        const netBookValue = rate === 0 ? originalAmount : Math.max(0, originalAmount * Math.pow(1 - rate, ageYears));
+
+        list.push({
+          id: `bank-${t.id}`,
+          category: cat,
+          vendorName: assignedLabel,
+          date: t.date || t.txn_date,
+          description: t.description,
+          amount: originalAmount,
+          netBookValue,
+          source: "Bank Statement"
+        });
+      }
+    });
+
     return list.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
-  }, [capitalItems]);
+  }, [capitalItems, bankTxns, bankLabels]);
 
   // Group vendors uniformly by category and exact vendor label name
   const categoryGroups = useMemo(() => {
