@@ -1195,12 +1195,13 @@ function ExpensesView({ expenses, setExpenses, bankTxns, bankLabels }) {
       const vendorName = (meta.label && meta.label.trim()) ? meta.label.trim() : k;
       const cpType = meta.type || "unlabeled";
 
-      if (cpType === "owner") return;
+      // EXCLUDE OWNER AND CAPITAL ITEMS FROM EXPENSES
+      if (cpType === "owner" || cpType.startsWith("capital_")) return;
 
       const groupKey = vendorName.toLowerCase();
-      if (!map[bankLabels]) {
-        map[bankLabels] = {
-          bankLabels,
+      if (!map[groupKey]) {
+        map[groupKey] = {
+          groupKey,
           vendorName,
           type: cpType,
           totalPaid: 0,
@@ -1208,8 +1209,8 @@ function ExpensesView({ expenses, setExpenses, bankTxns, bankLabels }) {
           txns: []
         };
       }
-      map[bankLabels].totalPaid += (+t.debit || 0);
-      map[bankLabels].txns.push({
+      map[groupKey].totalPaid += (+t.debit || 0);
+      map[groupKey].txns.push({
         id: `bank-${t.id}`,
         date: t.date || t.txn_date,
         description: t.description,
@@ -1217,6 +1218,8 @@ function ExpensesView({ expenses, setExpenses, bankTxns, bankLabels }) {
         source: "Bank Statement"
       });
     });
+
+    // ... rest of expenses processing ...
 
     (expenses || []).forEach(e => {
       if (!e) return;
