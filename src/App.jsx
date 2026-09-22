@@ -1425,14 +1425,35 @@ function ExpensesView({ expenses, setExpenses, bankTxns, bankLabels }) {
 
 function CapitalRegisterView({ capitalItems, bankTxns, bankLabels }) {
   const [open, setOpen] = useState(false);
-  const [expandedParentVendor, setExpandedParentVendor] = useState(null);
+  const [expandedVendor, setExpandedVendor] = useState(null);
   const [search, setSearch] = useState("");
 
   const blank = { date: today(), category: "machinery", subCategory: "", description: "", amount: "", paidTo: "", reference: "", fundedBy: "own", paymentMode: "bank", paidByPartner: "" };
   const [f, setF] = useState(blank);
   const set = k => v => setF(x => ({ ...x, [k]: v }));
 
-  // Build rows directly from bank statement transactions using bank_labels (type -> category, label -> vendor/sub-group)
+  async function save() {
+    if (!f.amount || !f.description) return alert("Amount and description required.");
+    try {
+      const payload = {
+        date: f.date,
+        category: f.category,
+        subCategory: f.subCategory || f.paidTo || "General Asset",
+        description: f.description,
+        amount: +f.amount,
+        paidTo: f.paidTo,
+        reference: f.reference,
+        fundedBy: f.fundedBy,
+        paymentMode: f.paymentMode,
+        paidByPartner: f.paidByPartner
+      };
+      const row = await db.saveCapitalItem(payload);
+      setCapitalItems(cs => [row, ...cs]);
+      setOpen(false); setF(blank);
+    } catch (err) { alert(err.message); }
+  }
+
+  // Build rows directly from bank statement and manual entries, grouping by parent label
   const allCapitalRows = useMemo(() => {
     const list = [];
     const currentDate = new Date();
@@ -1453,7 +1474,7 @@ function CapitalRegisterView({ capitalItems, bankTxns, bankLabels }) {
       list.push({
         id: `manual-${c.id}`,
         category: c.category || "machinery",
-        parentLabel: parentLabel,
+        vendorName: parentLabel,
         date: c.date,
         description: c.description,
         amount: originalAmount,
@@ -1469,9 +1490,7 @@ function CapitalRegisterView({ capitalItems, bankTxns, bankLabels }) {
       const meta = (bankLabels || {})[k] || {};
       const type = meta.type || "unlabeled";
 
-      // If the type indicates a capital asset (e.g. capital_land, capital_machinery)
       if (type.startsWith("capital_")) {
-        // Use the assigned label (e.g., MEENAKSHI BUILD TECH) as the parent group name
         const parentLabel = (meta.label && meta.label.trim()) ? meta.label.trim().toUpperCase() : normalizeDesc(t.description);
 
         let cat = "machinery";
@@ -1490,7 +1509,7 @@ function CapitalRegisterView({ capitalItems, bankTxns, bankLabels }) {
         list.push({
           id: `bank-${t.id}`,
           category: cat,
-          parentLabel: parentLabel,
+          vendorName: parentLabel,
           date: t.date || t.txn_date,
           description: t.description,
           amount: originalAmount,
@@ -1503,43 +1522,43 @@ function CapitalRegisterView({ capitalItems, bankTxns, bankLabels }) {
     return list.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
   }, [capitalItems, bankTxns, bankLabels]);
 
-  // Group by Category -> Parent Label (flat transaction list per vendor, no sub-groups)
+  // Group vendors directly by category -> Vendor Label name
   const categoryGroups = useMemo(() => {
     const map = {};
     CAP_CATS.forEach(c => {
-      map[c.id] = { categoryId: c.id, label: c.label, totalCost: 0, totalNBV: 0, parentsMap: {} };
+      map[c.id] = { categoryId: c.id, label: c.label, totalCost: 0, totalNBV: 0, vendorsMap: {} };
     });
 
     allCapitalRows.forEach(item => {
       const cat = item.category || "other";
       if (!map[cat]) {
-        map[cat] = { categoryId: cat, label: cat.toUpperCase(), totalCost: 0, totalNBV: 0, parentsMap: {} };
+        map[cat] = { categoryId: cat, label: cat.toUpperCase(), totalCost: 0, totalNBV: 0, vendorsMap: {} };
       }
       map[cat].totalCost += item.amount;
       map[cat].totalNBV += item.netBookValue;
 
-      const pName = (item.parentLabel || "GENERAL").trim();
-      const pKey = pName.toLowerCase();
-      if (!map[cat].parentsMap[pKey]) {
-        map[cat].parentsMap[pKey] = { parentKey: `${cat}-${pKey}`, parentName: pName, totalCost: 0, totalNBV: 0, txns: [] };
+      const vName = (item.vendorName || "General").trim();
+      const vKey = vName.toLowerCase();
+      if (!map[cat].vendorsMap[vKey]) {
+        map[cat].vendorsMap[vKey] = { vendorKey: `${cat}-${vKey}`, vendorName: vName, totalCost: 0, totalNBV: 0, txns: [] };
       }
-      map[cat].parentsMap[pKey].totalCost += item.amount;
-      map[cat].parentsMap[pKey].totalNBV += item.netBookValue;
-      map[cat].parentsMap[pKey].txns.push(item);
+      map[cat].vendorsMap[vKey].totalCost += item.amount;
+      map[cat].vendorsMap[vKey].totalNBV += item.netBookValue;
+      map[cat].vendorsMap[vKey].txns.push(item);
     });
 
     return Object.values(map)
       .filter(g => g.totalCost > 0)
       .map(g => ({
         ...g,
-        parents: Object.values(g.parentsMap).sort((a, b) => b.totalCost - a.totalCost)
+        vendors: Object.values(g.vendorsMap).sort((a, b) => b.totalCost - a.totalCost)
       }))
       .sort((a, b) => b.totalCost - a.totalCost);
   }, [allCapitalRows]);
 
   const filteredGroups = categoryGroups.filter(g => {
     if (!search) return true;
-    return g.label.toLowerCase().includes(search.toLowerCase()) || g.parents.some(p => p.parentName.toLowerCase().includes(search.toLowerCase()) || p.txns.some(t => t.description.toLowerCase().includes(search.toLowerCase())));
+    return g.label.toLowerCase().includes(search.toLowerCase()) || g.vendors.some(v => v.vendorName.toLowerCase().includes(search.toLowerCase()) || v.txns.some(t => t.description.toLowerCase().includes(search.toLowerCase())));
   });
 
   const totalCapexAll = allCapitalRows.reduce((s, c) => s + c.amount, 0);
@@ -1591,24 +1610,24 @@ function CapitalRegisterView({ capitalItems, bankTxns, bankLabels }) {
               </div>
 
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                {g.parents.map(p => (
-                  <div key={p.parentKey} style={{ background: "var(--bg3)", border: "1px solid var(--border)", borderRadius: "var(--r)", padding: 14 }}>
+                {g.vendors.map(v => (
+                  <div key={v.vendorKey} style={{ background: "var(--bg3)", border: "1px solid var(--border)", borderRadius: "var(--r)", padding: 14 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 10 }}>
                       <div>
                         <div style={{ fontSize: 10, color: "var(--text3)", fontFamily: "var(--mono)", textTransform: "uppercase" }}>Vendor / Counterparty Label</div>
-                        <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text)", marginTop: 2 }}>{p.parentName}</div>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text)", marginTop: 2 }}>{v.vendorName}</div>
                       </div>
                       <div style={{ display: "flex", gap: 16, fontFamily: "var(--mono)", fontSize: 12, alignItems: "center" }}>
-                        <div>PAID: <span style={{ color: "var(--accent)", fontWeight: 700 }}>{fmt(p.totalCost)}</span></div>
-                        <div>NET VALUE: <span style={{ color: "var(--teal)", fontWeight: 700 }}>{fmt(p.totalNBV)}</span></div>
-                        <button className="btn btn-ghost btn-sm" onClick={() => setExpandedParentVendor(x => x === p.parentKey ? null : p.parentKey)}>
-                          {expandedParentVendor === p.parentKey ? `Hide transactions` : `View transactions (${p.txns.length})`}
+                        <div>PAID: <span style={{ color: "var(--accent)", fontWeight: 700 }}>{fmt(v.totalCost)}</span></div>
+                        <div>NET VALUE: <span style={{ color: "var(--teal)", fontWeight: 700 }}>{fmt(v.totalNBV)}</span></div>
+                        <button className="btn btn-ghost btn-sm" onClick={() => setExpandedVendor(x => x === v.vendorKey ? null : v.vendorKey)}>
+                          {expandedVendor === v.vendorKey ? `Hide transactions (${v.txns.length})` : `View transactions (${v.txns.length})`}
                         </button>
                       </div>
                     </div>
 
-                    {expandedParentVendor === p.parentKey && (
-                      <div className="table-wrap" style={{ marginTop: 14 }}>
+                    {expandedVendor === v.vendorKey && (
+                      <div className="table-wrap" style={{ marginTop: 12, marginBottom: 0 }}>
                         <table>
                           <thead>
                             <tr>
@@ -1620,7 +1639,7 @@ function CapitalRegisterView({ capitalItems, bankTxns, bankLabels }) {
                             </tr>
                           </thead>
                           <tbody>
-                            {p.txns.sort((a, b) => (b.date || "").localeCompare(a.date || "")).map(t => (
+                            {v.txns.sort((a, b) => (b.date || "").localeCompare(a.date || "")).map(t => (
                               <tr key={t.id}>
                                 <td className="mono" style={{ fontSize: 11, color: "var(--text3)" }}>{t.date}</td>
                                 <td style={{ fontSize: 12 }}>{t.description}</td>
