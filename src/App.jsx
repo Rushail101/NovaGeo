@@ -1,7 +1,6 @@
 import React, { useState, useMemo, useEffect } from "react";
 import * as XLSX from "xlsx";
 import * as db from "./db.js";
-import { exportStatementPDF } from "./pdfExport.js";
 
 // ── Design System ─────────────────────────────────────────────────────────────
 const FONTS = `@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap');`;
@@ -1357,30 +1356,7 @@ function ExpensesView({ expenses, setExpenses, bankTxns, bankLabels }) {
           onClose={() => setSelectedVendorForStmt(null)} 
           foot={
             <div style={{ display: "flex", gap: 8 }}>
-              <button
-                className="btn btn-ghost"
-                onClick={() => exportStatementPDF({
-                  title: `Statement of Account: ${selectedVendorForStmt.vendorName}`,
-                  subtitle: `Category: ${selectedVendorForStmt.type}`,
-                  summary: [
-                    { label: "Total Disbursed", value: fmt(selectedVendorForStmt.totalPaid), color: [255, 92, 92] },
-                    { label: "Pending Due", value: fmt(selectedVendorForStmt.totalDue), color: [245, 166, 35] },
-                  ],
-                  columns: [
-                    { key: "date", label: "Date" },
-                    { key: "description", label: "Description" },
-                    { key: "source", label: "Source" },
-                    { key: "amount", label: "Amount", align: "right" },
-                  ],
-                  rows: selectedVendorForStmt.txns
-                    .slice()
-                    .sort((a, b) => (b.date || "").localeCompare(a.date || ""))
-                    .map(t => ({ date: t.date, description: t.description, source: t.source, amount: fmt(t.amount) })),
-                  fileName: `Statement_${selectedVendorForStmt.vendorName}_${today()}.pdf`,
-                })}
-              >
-                📄 Export PDF
-              </button>
+              <button className="btn btn-ghost" onClick={() => window.print()}>🖨 Print / Export PDF</button>
               <button className="btn btn-primary" onClick={() => alert("Statement link ready to share via WhatsApp!")}>💬 Share via WhatsApp</button>
             </div>
           }
@@ -1447,12 +1423,12 @@ function ExpensesView({ expenses, setExpenses, bankTxns, bankLabels }) {
   );
 }
 
-function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabels }) {
+function CapitalRegisterView({ capitalItems, bankTxns, bankLabels }) {
   const [open, setOpen] = useState(false);
   const [expandedVendor, setExpandedVendor] = useState(null);
   const [search, setSearch] = useState("");
 
-  const blank = { date: today(), category: "machinery", subCategory: "", description: "", amount: "", paidTo: "", reference: "", fundedBy: "own", paymentMode: "bank", paidByPartner: "", totalDue: "" };
+  const blank = { date: today(), category: "machinery", subCategory: "", description: "", amount: "", paidTo: "", reference: "", fundedBy: "own", paymentMode: "bank", paidByPartner: "" };
   const [f, setF] = useState(blank);
   const set = k => v => setF(x => ({ ...x, [k]: v }));
 
@@ -1469,8 +1445,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
         reference: f.reference,
         fundedBy: f.fundedBy,
         paymentMode: f.paymentMode,
-        paidByPartner: f.paidByPartner,
-        totalDue: f.totalDue === "" ? null : +f.totalDue
+        paidByPartner: f.paidByPartner
       };
       const row = await db.saveCapitalItem(payload);
       setCapitalItems(cs => [row, ...cs]);
@@ -1478,36 +1453,19 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
     } catch (err) { alert(err.message); }
   }
 
+  // Build rows directly from bank statement and manual entries, grouping by parent label
   const allCapitalRows = useMemo(() => {
     const list = [];
     const currentDate = new Date();
 
+    // EXCLUDE MANUAL ENTRIES COMPLETELY (Uncomment or remove this section to stop manual records from showing)
+    /* 
     (capitalItems || []).forEach(c => {
-      if (!c) return;
-      const cat = c.category || "other";
-      const catConfig = CAP_CATS.find(x => x.id === cat) || { defaultRate: 15 };
-      const rate = catConfig.defaultRate / 100;
+      ...
+    }); 
+    */
 
-      const paidAmount = +c.amount || 0;
-      const dueAmount = c.totalDue ? Math.max(0, (+c.totalDue || 0) - paidAmount) : 0;
-
-      const acqDate = new Date(c.date || today());
-      const ageYears = Math.max(0, (currentDate - acqDate) / (1000 * 60 * 60 * 24 * 365.25));
-      const netBookValue = rate === 0 ? paidAmount : Math.max(0, paidAmount * Math.pow(1 - rate, ageYears));
-
-      list.push({
-        id: `manual-${c.id}`,
-        category: cat,
-        vendorName: (c.subCategory || c.paidTo || "General Asset").trim() || "General Asset",
-        date: c.date,
-        description: c.description,
-        amount: paidAmount,
-        due: dueAmount,
-        netBookValue,
-        source: "Manual Entry"
-      });
-    });
-
+    // 2. Process Bank Transactions mapped via bank_labels
     (bankTxns || []).forEach(t => {
       if (!t || !t.debit || t.debit <= 0) return;
       const k = t.key || t.group_key || (t.description ? normalizeDesc(t.description) : "UNKNOWN");
@@ -1537,7 +1495,6 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
           date: t.date || t.txn_date,
           description: t.description,
           amount: originalAmount,
-          due: 0,
           netBookValue,
           source: "Bank Statement"
         });
@@ -1545,31 +1502,30 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
     });
 
     return list.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
-  }, [bankTxns, bankLabels, capitalItems]);
+  }, [bankTxns, bankLabels]); // Removed capitalItems from dependencies since manual entries are bypassed
 
+  // Group vendors directly by category -> Vendor Label name
   const categoryGroups = useMemo(() => {
     const map = {};
     CAP_CATS.forEach(c => {
-      map[c.id] = { categoryId: c.id, label: c.label, totalCost: 0, totalNBV: 0, totalDue: 0, vendorsMap: {} };
+      map[c.id] = { categoryId: c.id, label: c.label, totalCost: 0, totalNBV: 0, vendorsMap: {} };
     });
 
     allCapitalRows.forEach(item => {
       const cat = item.category || "other";
       if (!map[cat]) {
-        map[cat] = { categoryId: cat, label: cat.toUpperCase(), totalCost: 0, totalNBV: 0, totalDue: 0, vendorsMap: {} };
+        map[cat] = { categoryId: cat, label: cat.toUpperCase(), totalCost: 0, totalNBV: 0, vendorsMap: {} };
       }
       map[cat].totalCost += item.amount;
       map[cat].totalNBV += item.netBookValue;
-      map[cat].totalDue += (item.due || 0);
 
       const vName = (item.vendorName || "General").trim();
       const vKey = vName.toLowerCase();
       if (!map[cat].vendorsMap[vKey]) {
-        map[cat].vendorsMap[vKey] = { vendorKey: `${cat}-${vKey}`, vendorName: vName, totalCost: 0, totalNBV: 0, totalDue: 0, txns: [] };
+        map[cat].vendorsMap[vKey] = { vendorKey: `${cat}-${vKey}`, vendorName: vName, totalCost: 0, totalNBV: 0, txns: [] };
       }
       map[cat].vendorsMap[vKey].totalCost += item.amount;
       map[cat].vendorsMap[vKey].totalNBV += item.netBookValue;
-      map[cat].vendorsMap[vKey].totalDue += (item.due || 0);
       map[cat].vendorsMap[vKey].txns.push(item);
     });
 
@@ -1589,7 +1545,6 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
 
   const totalCapexAll = allCapitalRows.reduce((s, c) => s + c.amount, 0);
   const totalBookValAll = allCapitalRows.reduce((s, c) => s + c.netBookValue, 0);
-  const totalDueAll = allCapitalRows.reduce((s, c) => s + (c.due || 0), 0);
 
   return (
     <div>
@@ -1601,10 +1556,9 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
         <button className="btn btn-primary" onClick={() => setOpen(true)}>+ Add Fixed Asset</button>
       </div>
 
-      <div className="stats-grid-5">
+      <div className="stats-grid">
         <StatCard label="Gross Capital Invested" value={fmt(totalCapexAll)} color="accent" sub="Historical cost" />
         <StatCard label="Net Book Value" value={fmt(totalBookValAll)} color="teal" sub="Post-depreciation value" />
-        <StatCard label="Pending / Due Payments" value={fmt(totalDueAll)} color="amber" sub="Outstanding invoices" />
         <StatCard label="Active Asset Blocks" value={categoryGroups.length} color="blue" sub="Categories utilized" />
         <StatCard label="Registered Items" value={allCapitalRows.length} color="purple" sub="Total asset records" />
       </div>
@@ -1634,7 +1588,6 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
                 <div style={{ display: "flex", gap: 16, fontFamily: "var(--mono)", fontSize: 12 }}>
                   <div>Gross Cost: <span style={{ color: "var(--accent)", fontWeight: 700 }}>{fmt(g.totalCost)}</span></div>
                   <div>Net Book Value: <span style={{ color: "var(--teal)", fontWeight: 700 }}>{fmt(g.totalNBV)}</span></div>
-                  {g.totalDue > 0 && <div>Due: <span style={{ color: "var(--amber)", fontWeight: 700 }}>{fmt(g.totalDue)}</span></div>}
                 </div>
               </div>
 
@@ -1648,7 +1601,6 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
                       </div>
                       <div style={{ display: "flex", gap: 16, fontFamily: "var(--mono)", fontSize: 12, alignItems: "center" }}>
                         <div>PAID: <span style={{ color: "var(--accent)", fontWeight: 700 }}>{fmt(v.totalCost)}</span></div>
-                        {v.totalDue > 0 && <div>DUE: <span style={{ color: "var(--amber)", fontWeight: 700 }}>{fmt(v.totalDue)}</span></div>}
                         <div>NET VALUE: <span style={{ color: "var(--teal)", fontWeight: 700 }}>{fmt(v.totalNBV)}</span></div>
                         <button className="btn btn-ghost btn-sm" onClick={() => setExpandedVendor(x => x === v.vendorKey ? null : v.vendorKey)}>
                           {expandedVendor === v.vendorKey ? `Hide transactions (${v.txns.length})` : `View transactions (${v.txns.length})`}
@@ -1665,7 +1617,6 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
                               <th>Narration / Description</th>
                               <th>Source</th>
                               <th className="r">Amount</th>
-                              <th className="r">Due</th>
                               <th className="r">Net Book Value</th>
                             </tr>
                           </thead>
@@ -1676,7 +1627,6 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
                                 <td style={{ fontSize: 12 }}>{t.description}</td>
                                 <td><BadgeComponent type={t.source === "Bank Statement" ? "blue" : "accent"}>{t.source}</BadgeComponent></td>
                                 <td className="r mono" style={{ fontWeight: 700 }}>{fmt(t.amount)}</td>
-                                <td className="r mono" style={{ color: t.due > 0 ? "var(--amber)" : "var(--text3)", fontWeight: 700 }}>{t.due > 0 ? fmt(t.due) : "—"}</td>
                                 <td className="r mono" style={{ color: "var(--teal)", fontWeight: 700 }}>{fmt(t.netBookValue)}</td>
                               </tr>
                             ))}
@@ -1704,10 +1654,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
           </div>
           <div className="form-row cols-2">
             <FG label="Vendor / Group Name"><input placeholder="e.g. Mateshwari Industries / Shree Power" value={f.subCategory} onChange={e => set("subCategory")(e.target.value)} /></FG>
-            <FG label="Amount Paid Now (₹) *"><input type="number" value={f.amount} onChange={e => set("amount")(e.target.value)} /></FG>
-          </div>
-          <div className="form-row cols-2">
-            <FG label="Total Invoice Amount Due (₹)" note="Leave blank if fully paid"><input type="number" placeholder="Leave blank if fully paid" value={f.totalDue} onChange={e => set("totalDue")(e.target.value)} /></FG>
+            <FG label="Total Cost / Value (₹) *"><input type="number" value={f.amount} onChange={e => set("amount")(e.target.value)} /></FG>
           </div>
           <div className="form-row cols-3">
             <FG label="Payment Method">
@@ -2128,16 +2075,7 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPa
   const totalCashSpentAll = partnerSummaries.reduce((s, p) => s + p.cashSpentOnSite, 0);
   const totalDrawingsAll = partnerSummaries.reduce((s, p) => s + p.drawingsTaken, 0);
 
-  const [cf, setCf] = useState({ partnerName: "", date: today(), amount: "", isCapex: false, category: "machinery", description: "", ref: "", linkedVendor: "", projectName: "" });
-
-  // Existing vendor names already seen in expenses/capex, for the "link to vendor" suggestion list
-  const knownVendors = useMemo(() => {
-    const s = new Set();
-    (bankLabels ? Object.values(bankLabels) : []).forEach(m => {
-      if (m && m.label && (m.type === "vendor" || (m.type || "").startsWith("capital_"))) s.add(m.label.trim());
-    });
-    return Array.from(s).filter(Boolean).sort();
-  }, [bankLabels]);
+  const [cf, setCf] = useState({ partnerName: "", date: today(), amount: "", isCapex: false, category: "machinery", description: "", ref: "" });
 
   useEffect(() => {
     if (!cf.partnerName && partners.length > 0) {
@@ -2148,16 +2086,12 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPa
   async function handleDirectCashSubmit() {
     if (!cf.partnerName || !cf.amount || !cf.description) return alert("Partner name, amount, and description are required.");
     try {
-      const res = await db.recordPartnerDirectCashExpense(
-        cf.partnerName, cf.date, cf.category, cf.amount, cf.description, cf.ref, cf.isCapex,
-        cf.linkedVendor ? cf.linkedVendor.trim() : "",
-        cf.projectName ? cf.projectName.trim() : "General Site"
-      );
+      const res = await db.recordPartnerDirectCashExpense(cf.partnerName, cf.date, cf.category, cf.amount, cf.description, cf.ref, cf.isCapex);
       setPartnerCashbook(prev => [res.cashbookEntry, ...(prev || [])]);
       if (res.isCapex) setCapitalItems(prev => [res.item, ...(prev || [])]);
       else setExpenses(prev => [res.item, ...(prev || [])]);
       setOpenCashModal(false);
-      setCf({ partnerName: partners[0] || "", date: today(), amount: "", isCapex: false, category: "machinery", description: "", ref: "", linkedVendor: "", projectName: "" });
+      setCf({ partnerName: partners[0] || "", date: today(), amount: "", isCapex: false, category: "machinery", description: "", ref: "" });
       alert(`Logged ${fmt(cf.amount)} paid by ${cf.partnerName}!`);
     } catch (err) { alert(err.message); }
   }
@@ -2336,33 +2270,7 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPa
           onClose={() => setSelectedPartnerForStmt(null)} 
           foot={
             <div style={{ display: "flex", gap: 8 }}>
-              <button
-                className="btn btn-ghost"
-                onClick={() => exportStatementPDF({
-                  title: `Partner Capital Account: ${selectedPartnerForStmt.name}`,
-                  summary: [
-                    { label: "Capital Injected", value: fmt(selectedPartnerForStmt.capitalInjected), color: [200, 240, 100] },
-                    { label: "Site Cash Spent", value: fmt(selectedPartnerForStmt.cashSpentOnSite), color: [78, 203, 113] },
-                    { label: "Drawings", value: fmt(selectedPartnerForStmt.drawingsTaken), color: [255, 92, 92] },
-                    { label: "Net Standing", value: fmt(selectedPartnerForStmt.netStanding), color: [45, 212, 191] },
-                  ],
-                  columns: [
-                    { key: "date", label: "Date" },
-                    { key: "particulars", label: "Activity / Particulars" },
-                    { key: "amount", label: "Amount", align: "right" },
-                  ],
-                  rows: ledgerRows
-                    .filter(r => r.partnerName.toLowerCase() === selectedPartnerForStmt.name.toLowerCase())
-                    .map(r => ({
-                      date: r.entryDate,
-                      particulars: `${r.type}: ${r.remarks}`,
-                      amount: `${r.type === "Drawings" ? "-" : "+"}${fmt(r.amount)}`,
-                    })),
-                  fileName: `Partner_Statement_${selectedPartnerForStmt.name}_${today()}.pdf`,
-                })}
-              >
-                📄 Export PDF
-              </button>
+              <button className="btn btn-ghost" onClick={() => window.print()}>🖨 Print / Export PDF</button>
               <button className="btn btn-primary" onClick={() => alert("Partner statement ready to share via WhatsApp!")}>💬 Share via WhatsApp</button>
             </div>
           }
@@ -2425,17 +2333,6 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPa
             <FG label="Voucher / Cash Memo Ref"><input value={cf.ref} onChange={e => setCf({ ...cf, ref: e.target.value })} /></FG>
           </div>
           <div className="form-row"><FG label="Description *"><input value={cf.description} onChange={e => setCf({ ...cf, description: e.target.value })} /></FG></div>
-          <div className="form-row">
-            <FG label="Link to Vendor (optional)" note="Ties this cash payment to a vendor's ledger in Expenses / Capital, so it shows up against that vendor's paid/due total.">
-              <input
-                list="vendor-link-suggestions"
-                placeholder="e.g. Mateshwari Industries — leave blank if not vendor-specific"
-                value={cf.linkedVendor}
-                onChange={e => setCf({ ...cf, linkedVendor: e.target.value })}
-              />
-              <datalist id="vendor-link-suggestions">{knownVendors.map(v => <option key={v} value={v} />)}</datalist>
-            </FG>
-          </div>
         </Modal>
       )}
 
