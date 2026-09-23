@@ -1451,8 +1451,9 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
   const [open, setOpen] = useState(false);
   const [expandedVendor, setExpandedVendor] = useState(null);
   const [search, setSearch] = useState("");
+  const [selectedProject, setSelectedProject] = useState("All");
 
-  const blank = { date: today(), category: "machinery", subCategory: "", description: "", amount: "", paidTo: "", reference: "", fundedBy: "own", paymentMode: "bank", paidByPartner: "", totalDue: "" };
+  const blank = { date: today(), category: "machinery", subCategory: "", description: "", amount: "", paidTo: "", reference: "", fundedBy: "own", paymentMode: "bank", paidByPartner: "", totalDue: "", projectName: "" };
   const [f, setF] = useState(blank);
   const set = k => v => setF(x => ({ ...x, [k]: v }));
 
@@ -1470,7 +1471,8 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
         fundedBy: f.fundedBy,
         paymentMode: f.paymentMode,
         paidByPartner: f.paidByPartner,
-        totalDue: f.totalDue === "" ? null : +f.totalDue
+        totalDue: f.totalDue === "" ? null : +f.totalDue,
+        projectName: f.projectName || "General Site"
       };
       const row = await db.saveCapitalItem(payload);
       setCapitalItems(cs => [row, ...cs]);
@@ -1478,22 +1480,18 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
     } catch (err) { alert(err.message); }
   }
 
-  // Build rows directly from bank statement and manual entries, grouping by parent label
   const allCapitalRows = useMemo(() => {
     const list = [];
     const currentDate = new Date();
 
-    // 1. Process manually recorded capital/infra assets (supports partial "amount paid now"
-    //    against a larger "totalDue" invoice, same pattern as the Expenses tab).
+    // 1. Process manually recorded capital assets with project names
     (capitalItems || []).forEach(c => {
       if (!c) return;
       const cat = c.category || "other";
       const catConfig = CAP_CATS.find(x => x.id === cat) || { defaultRate: 15 };
       const rate = catConfig.defaultRate / 100;
-
       const paidAmount = +c.amount || 0;
       const dueAmount = c.totalDue ? Math.max(0, (+c.totalDue || 0) - paidAmount) : 0;
-
       const acqDate = new Date(c.date || today());
       const ageYears = Math.max(0, (currentDate - acqDate) / (1000 * 60 * 60 * 24 * 365.25));
       const netBookValue = rate === 0 ? paidAmount : Math.max(0, paidAmount * Math.pow(1 - rate, ageYears));
@@ -1507,11 +1505,12 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
         amount: paidAmount,
         due: dueAmount,
         netBookValue,
+        projectName: c.projectName || "General Site",
         source: "Manual Entry"
       });
     });
 
-    // 2. Process Bank Transactions mapped via bank_labels
+    // 2. Process Bank Transactions mapped to capital
     (bankTxns || []).forEach(t => {
       if (!t || !t.debit || t.debit <= 0) return;
       const k = t.key || t.group_key || (t.description ? normalizeDesc(t.description) : "UNKNOWN");
@@ -1520,7 +1519,6 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
 
       if (type.startsWith("capital_")) {
         const parentLabel = (meta.label && meta.label.trim()) ? meta.label.trim().toUpperCase() : normalizeDesc(t.description);
-
         let cat = "machinery";
         if (type === "capital_land") cat = "land";
         else if (type === "capital_electrical") cat = "electrical";
@@ -1528,7 +1526,6 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
 
         const catConfig = CAP_CATS.find(x => x.id === cat) || { defaultRate: 15 };
         const rate = catConfig.defaultRate / 100;
-
         const acqDate = new Date(t.date || t.txn_date || today());
         const ageYears = Math.max(0, (currentDate - acqDate) / (1000 * 60 * 60 * 24 * 365.25));
         const originalAmount = +t.debit || 0;
@@ -1543,6 +1540,7 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
           amount: originalAmount,
           due: 0,
           netBookValue,
+          projectName: t.projectName || "Plant Infrastructure",
           source: "Bank Statement"
         });
       }
@@ -1551,190 +1549,96 @@ function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabe
     return list.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
   }, [bankTxns, bankLabels, capitalItems]);
 
-  // Group vendors directly by category -> Vendor Label name
-  const categoryGroups = useMemo(() => {
-    const map = {};
-    CAP_CATS.forEach(c => {
-      map[c.id] = { categoryId: c.id, label: c.label, totalCost: 0, totalNBV: 0, totalDue: 0, vendorsMap: {} };
-    });
-
-    allCapitalRows.forEach(item => {
-      const cat = item.category || "other";
-      if (!map[cat]) {
-        map[cat] = { categoryId: cat, label: cat.toUpperCase(), totalCost: 0, totalNBV: 0, totalDue: 0, vendorsMap: {} };
-      }
-      map[cat].totalCost += item.amount;
-      map[cat].totalNBV += item.netBookValue;
-      map[cat].totalDue += (item.due || 0);
-
-      const vName = (item.vendorName || "General").trim();
-      const vKey = vName.toLowerCase();
-      if (!map[cat].vendorsMap[vKey]) {
-        map[cat].vendorsMap[vKey] = { vendorKey: `${cat}-${vKey}`, vendorName: vName, totalCost: 0, totalNBV: 0, totalDue: 0, txns: [] };
-      }
-      map[cat].vendorsMap[vKey].totalCost += item.amount;
-      map[cat].vendorsMap[vKey].totalNBV += item.netBookValue;
-      map[cat].vendorsMap[vKey].totalDue += (item.due || 0);
-      map[cat].vendorsMap[vKey].txns.push(item);
-    });
-
-    return Object.values(map)
-      .filter(g => g.totalCost > 0)
-      .map(g => ({
-        ...g,
-        vendors: Object.values(g.vendorsMap).sort((a, b) => b.totalCost - a.totalCost)
-      }))
-      .sort((a, b) => b.totalCost - a.totalCost);
+  const projectList = useMemo(() => {
+    const s = new Set();
+    allCapitalRows.forEach(r => { if (r.projectName) s.add(r.projectName); });
+    return Array.from(s);
   }, [allCapitalRows]);
 
-  const filteredGroups = categoryGroups.filter(g => {
+  const filteredRows = allCapitalRows.filter(r => {
+    if (selectedProject !== "All" && r.projectName !== selectedProject) return false;
     if (!search) return true;
-    return g.label.toLowerCase().includes(search.toLowerCase()) || g.vendors.some(v => v.vendorName.toLowerCase().includes(search.toLowerCase()) || v.txns.some(t => t.description.toLowerCase().includes(search.toLowerCase())));
+    return r.vendorName.toLowerCase().includes(search.toLowerCase()) || r.description.toLowerCase().includes(search.toLowerCase());
   });
 
-  const totalCapexAll = allCapitalRows.reduce((s, c) => s + c.amount, 0);
-  const totalBookValAll = allCapitalRows.reduce((s, c) => s + c.netBookValue, 0);
-  const totalDueAll = allCapitalRows.reduce((s, c) => s + (c.due || 0), 0);
+  const totalCapexFiltered = filteredRows.reduce((s, c) => s + c.amount, 0);
+  const totalBookValFiltered = filteredRows.reduce((s, c) => s + c.netBookValue, 0);
 
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
         <div>
           <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>Capital & Infrastructure Assets (Capex)</h3>
-          <p style={{ fontSize: 12, color: "var(--text3)" }}>Gross Invested: <strong style={{ color: "var(--accent)" }}>{fmt(totalCapexAll)}</strong> | Net Book Value: <strong style={{ color: "var(--teal)" }}>{fmt(totalBookValAll)}</strong></p>
+          <p style={{ fontSize: 12, color: "var(--text3)" }}>Filtered Invested: <strong style={{ color: "var(--accent)" }}>{fmt(totalCapexFiltered)}</strong> | Net Book Value: <strong style={{ color: "var(--teal)" }}>{fmt(totalBookValFiltered)}</strong></p>
         </div>
         <button className="btn btn-primary" onClick={() => setOpen(true)}>+ Add Fixed Asset</button>
       </div>
 
-      <div className="stats-grid-5">
-        <StatCard label="Gross Capital Invested" value={fmt(totalCapexAll)} color="accent" sub="Historical cost" />
-        <StatCard label="Net Book Value" value={fmt(totalBookValAll)} color="teal" sub="Post-depreciation value" />
-        <StatCard label="Pending / Due Payments" value={fmt(totalDueAll)} color="amber" sub="Outstanding invoices" />
-        <StatCard label="Active Asset Blocks" value={categoryGroups.length} color="blue" sub="Categories utilized" />
-        <StatCard label="Registered Items" value={allCapitalRows.length} color="purple" sub="Total asset records" />
-      </div>
-
-      <div className="filter-bar">
+      <div className="filter-bar" style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
         <input
           placeholder="Search asset block, vendor, or description…"
           value={search}
           onChange={e => setSearch(e.target.value)}
-          style={{ background: "var(--bg3)", border: "1px solid var(--border2)", borderRadius: "var(--r)", padding: "7px 11px", color: "var(--text)", fontSize: 12.5, minWidth: 280 }}
+          style={{ background: "var(--bg3)", border: "1px solid var(--border2)", borderRadius: "var(--r)", padding: "7px 11px", color: "var(--text)", fontSize: 12.5, minWidth: 260 }}
         />
+        <select value={selectedProject} onChange={e => setSelectedProject(e.target.value)} style={{ background: "var(--bg3)", border: "1px solid var(--border2)", borderRadius: "var(--r)", padding: "7px 11px", color: "var(--text)", fontSize: 12.5 }}>
+          <option value="All">All Projects / Work Names</option>
+          {projectList.map(p => <option key={p} value={p}>{p}</option>)}
+        </select>
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-        {filteredGroups.length === 0 ? (
-          <div className="config-card" style={{ textAlign: "center", padding: 32 }}>
-            <EmptyState icon="🏗" message="No capital assets found" sub="Add fixed assets manually or tag bank statement groups." />
-          </div>
-        ) : (
-          filteredGroups.map(g => (
-            <div key={g.categoryId} className="config-card" style={{ padding: 16 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid var(--border)", paddingBottom: 10, marginBottom: 12 }}>
-                <div>
-                  <div style={{ fontSize: 10, color: "var(--text3)", fontFamily: "var(--mono)", textTransform: "uppercase" }}>Asset Block</div>
-                  <div style={{ fontSize: 16, fontWeight: 700, color: "var(--text)", marginTop: 2 }}>{g.label}</div>
-                </div>
-                <div style={{ display: "flex", gap: 16, fontFamily: "var(--mono)", fontSize: 12 }}>
-                  <div>Gross Cost: <span style={{ color: "var(--accent)", fontWeight: 700 }}>{fmt(g.totalCost)}</span></div>
-                  <div>Net Book Value: <span style={{ color: "var(--teal)", fontWeight: 700 }}>{fmt(g.totalNBV)}</span></div>
-                  {g.totalDue > 0 && <div>Due: <span style={{ color: "var(--amber)", fontWeight: 700 }}>{fmt(g.totalDue)}</span></div>}
-                </div>
-              </div>
-
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                {g.vendors.map(v => (
-                  <div key={v.vendorKey} style={{ background: "var(--bg3)", border: "1px solid var(--border)", borderRadius: "var(--r)", padding: 14 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 10 }}>
-                      <div>
-                        <div style={{ fontSize: 10, color: "var(--text3)", fontFamily: "var(--mono)", textTransform: "uppercase" }}>Vendor / Counterparty Label</div>
-                        <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text)", marginTop: 2 }}>{v.vendorName}</div>
-                      </div>
-                      <div style={{ display: "flex", gap: 16, fontFamily: "var(--mono)", fontSize: 12, alignItems: "center" }}>
-                        <div>PAID: <span style={{ color: "var(--accent)", fontWeight: 700 }}>{fmt(v.totalCost)}</span></div>
-                        {v.totalDue > 0 && <div>DUE: <span style={{ color: "var(--amber)", fontWeight: 700 }}>{fmt(v.totalDue)}</span></div>}
-                        <div>NET VALUE: <span style={{ color: "var(--teal)", fontWeight: 700 }}>{fmt(v.totalNBV)}</span></div>
-                        <button className="btn btn-ghost btn-sm" onClick={() => setExpandedVendor(x => x === v.vendorKey ? null : v.vendorKey)}>
-                          {expandedVendor === v.vendorKey ? `Hide transactions (${v.txns.length})` : `View transactions (${v.txns.length})`}
-                        </button>
-                      </div>
-                    </div>
-
-                    {expandedVendor === v.vendorKey && (
-                      <div className="table-wrap" style={{ marginTop: 12, marginBottom: 0 }}>
-                        <table>
-                          <thead>
-                            <tr>
-                              <th>Date</th>
-                              <th>Narration / Description</th>
-                              <th>Source</th>
-                              <th className="r">Amount</th>
-                              <th className="r">Due</th>
-                              <th className="r">Net Book Value</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {v.txns.sort((a, b) => (b.date || "").localeCompare(a.date || "")).map(t => (
-                              <tr key={t.id}>
-                                <td className="mono" style={{ fontSize: 11, color: "var(--text3)" }}>{t.date}</td>
-                                <td style={{ fontSize: 12 }}>{t.description}</td>
-                                <td><BadgeComponent type={t.source === "Bank Statement" ? "blue" : "accent"}>{t.source}</BadgeComponent></td>
-                                <td className="r mono" style={{ fontWeight: 700 }}>{fmt(t.amount)}</td>
-                                <td className="r mono" style={{ color: t.due > 0 ? "var(--amber)" : "var(--text3)", fontWeight: 700 }}>{t.due > 0 ? fmt(t.due) : "—"}</td>
-                                <td className="r mono" style={{ color: "var(--teal)", fontWeight: 700 }}>{fmt(t.netBookValue)}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))
-        )}
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Project / Work Name</th>
+              <th>Category</th>
+              <th>Vendor / Asset Name</th>
+              <th>Description</th>
+              <th className="r">Amount Paid</th>
+              <th className="r">Net Book Value</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredRows.length === 0 ? (
+              <tr><td colSpan={7} style={{ textAlign: "center", color: "var(--text3)", padding: 32 }}><EmptyState icon="🏗" message="No capital assets found for this filter" /></td></tr>
+            ) : (
+              filteredRows.map(r => (
+                <tr key={r.id}>
+                  <td className="mono" style={{ fontSize: 11, color: "var(--text3)" }}>{r.date}</td>
+                  <td><BadgeComponent type="accent">{r.projectName}</BadgeComponent></td>
+                  <td style={{ textTransform: "capitalize" }}>{r.category}</td>
+                  <td style={{ fontWeight: 600 }}>{r.vendorName}</td>
+                  <td style={{ fontSize: 12 }}>{r.description}</td>
+                  <td className="r mono" style={{ fontWeight: 700 }}>{fmt(r.amount)}</td>
+                  <td className="r mono" style={{ color: "var(--teal)", fontWeight: 700 }}>{fmt(r.netBookValue)}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
       </div>
 
       {open && (
         <Modal title="Record Capital / Infrastructure Asset" onClose={() => setOpen(false)} foot={<><button className="btn btn-ghost" onClick={() => setOpen(false)}>Cancel</button><button className="btn btn-primary" onClick={save}>Save Asset</button></>}>
           <div className="form-row cols-2">
             <FG label="Acquisition Date"><input type="date" value={f.date} onChange={e => set("date")(e.target.value)} /></FG>
+            <FG label="Project / Work Name"><input placeholder="e.g. Ball Mill Foundation Phase 1" value={f.projectName} onChange={e => set("projectName")(e.target.value)} /></FG>
+          </div>
+          <div className="form-row cols-2">
             <FG label="Asset Category">
               <select value={f.category} onChange={e => set("category")(e.target.value)}>
                 {CAP_CATS.map(c => <option key={c.id} value={c.id}>{c.label} ({c.defaultRate}%)</option>)}
               </select>
             </FG>
-          </div>
-          <div className="form-row cols-2">
-            <FG label="Vendor / Group Name"><input placeholder="e.g. Mateshwari Industries / Shree Power" value={f.subCategory} onChange={e => set("subCategory")(e.target.value)} /></FG>
             <FG label="Amount Paid Now (₹) *"><input type="number" value={f.amount} onChange={e => set("amount")(e.target.value)} /></FG>
           </div>
           <div className="form-row cols-2">
-            <FG label="Total Invoice Amount Due (₹)" note="Leave blank if fully paid"><input type="number" placeholder="Leave blank if fully paid" value={f.totalDue} onChange={e => set("totalDue")(e.target.value)} /></FG>
+            <FG label="Vendor / Group Name"><input placeholder="e.g. Mateshwari Industries" value={f.subCategory} onChange={e => set("subCategory")(e.target.value)} /></FG>
+            <FG label="Total Invoice Amount Due (₹)"><input type="number" placeholder="Leave blank if fully paid" value={f.totalDue} onChange={e => set("totalDue")(e.target.value)} /></FG>
           </div>
-          <div className="form-row cols-3">
-            <FG label="Payment Method">
-              <select value={f.paymentMode} onChange={e => set("paymentMode")(e.target.value)}>
-                <option value="bank">Company Bank Account</option>
-                <option value="cash">Direct Cash / Petty Cash</option>
-                <option value="partner_personal">Partner Personal Account</option>
-              </select>
-            </FG>
-            <FG label="Financing Source">
-              <select value={f.fundedBy} onChange={e => set("fundedBy")(e.target.value)}>
-                <option value="own">Partner Equity</option>
-                <option value="loan">Bank / Equipment Loan</option>
-              </select>
-            </FG>
-            <FG label="Paid By Partner (If out of pocket)"><input placeholder="Partner Name" value={f.paidByPartner} onChange={e => set("paidByPartner")(e.target.value)} /></FG>
-          </div>
-          <div className="form-row"><FG label="Asset Description *"><input placeholder="e.g. 250KVA Transformer installation advance" value={f.description} onChange={e => set("description")(e.target.value)} /></FG></div>
-          <div className="form-row cols-2">
-            <FG label="Paid To / Vendor Name"><input value={f.paidTo} onChange={e => set("paidTo")(e.target.value)} /></FG>
-            <FG label="Registry / Invoice Ref"><input value={f.reference} onChange={e => set("reference")(e.target.value)} /></FG>
-          </div>
+          <div className="form-row"><FG label="Asset Description *"><input placeholder="e.g. Heavy duty MS plates for trunnion bearing" value={f.description} onChange={e => set("description")(e.target.value)} /></FG></div>
         </Modal>
       )}
     </div>
@@ -2133,7 +2037,7 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPa
   const totalCashSpentAll = partnerSummaries.reduce((s, p) => s + p.cashSpentOnSite, 0);
   const totalDrawingsAll = partnerSummaries.reduce((s, p) => s + p.drawingsTaken, 0);
 
-  const [cf, setCf] = useState({ partnerName: "", date: today(), amount: "", isCapex: false, category: "machinery", description: "", ref: "", linkedVendor: "" });
+  const [cf, setCf] = useState({ partnerName: "", date: today(), amount: "", isCapex: false, category: "machinery", description: "", ref: "", linkedVendor: "", projectName: "" });
 
   // Existing vendor names already seen in expenses/capex, for the "link to vendor" suggestion list
   const knownVendors = useMemo(() => {
@@ -2155,13 +2059,14 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPa
     try {
       const res = await db.recordPartnerDirectCashExpense(
         cf.partnerName, cf.date, cf.category, cf.amount, cf.description, cf.ref, cf.isCapex,
-        cf.linkedVendor ? cf.linkedVendor.trim() : ""
+        cf.linkedVendor ? cf.linkedVendor.trim() : "",
+        cf.projectName ? cf.projectName.trim() : "General Site"
       );
       setPartnerCashbook(prev => [res.cashbookEntry, ...(prev || [])]);
       if (res.isCapex) setCapitalItems(prev => [res.item, ...(prev || [])]);
       else setExpenses(prev => [res.item, ...(prev || [])]);
       setOpenCashModal(false);
-      setCf({ partnerName: partners[0] || "", date: today(), amount: "", isCapex: false, category: "machinery", description: "", ref: "", linkedVendor: "" });
+      setCf({ partnerName: partners[0] || "", date: today(), amount: "", isCapex: false, category: "machinery", description: "", ref: "", linkedVendor: "", projectName: "" });
       alert(`Logged ${fmt(cf.amount)} paid by ${cf.partnerName}!`);
     } catch (err) { alert(err.message); }
   }
