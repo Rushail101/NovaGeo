@@ -127,6 +127,11 @@ tr:hover td{background:rgba(255,255,255,.02)}
 .lot-chip{display:inline-flex;align-items:center;gap:5px;background:#0a1a00;border:1px solid #1e3a00;border-radius:var(--r);padding:3px 10px;font-family:var(--mono);font-size:11px;color:var(--accent)}
 .output-rows{display:flex;flex-direction:column;gap:8px}
 .output-row{display:grid;grid-template-columns:1fr 1fr auto;gap:8px;align-items:end}
+.hamburger-btn{display:none;background:none;border:1px solid var(--border2);border-radius:var(--r);color:var(--text2);font-size:15px;padding:5px 9px;cursor:pointer;line-height:1;align-items:center;justify-content:center}
+.hamburger-btn:hover{color:var(--text);border-color:var(--border3)}
+.sidebar-close{display:none;background:none;border:none;color:var(--text2);font-size:15px;cursor:pointer;padding:4px 8px;line-height:1}
+.sidebar-close:hover{color:var(--text)}
+.due-badge{font-size:10px;font-family:var(--mono);padding:1px 7px;border-radius:20px;background:#1a1500;color:var(--amber);border:1px solid #3a2e00}
 
 /* ── Mobile & Tablet Responsiveness (Off-Canvas Sidebar Drawer) ── */
 @media (max-width: 860px) {
@@ -198,6 +203,12 @@ tr:hover td{background:rgba(255,255,255,.02)}
   }
   .form-row.cols-2, .form-row.cols-3 {
     grid-template-columns: 1fr;
+  }
+  .hamburger-btn {
+    display: inline-flex;
+  }
+  .sidebar-close {
+    display: inline-flex;
   }
 }
 @media (max-width: 480px) {
@@ -447,6 +458,84 @@ function EmptyState({ icon, message, sub }) {
   );
 }
 
+// ── Shared: search box used across the ledger/register views ──────────────────
+function SearchBar({ value, onChange, placeholder, style }) {
+  return (
+    <input
+      placeholder={placeholder}
+      value={value}
+      onChange={e => onChange(e.target.value)}
+      style={{ background: "var(--bg3)", border: "1px solid var(--border2)", borderRadius: "var(--r)", padding: "7px 11px", color: "var(--text)", fontSize: 12.5, minWidth: 260, ...style }}
+    />
+  );
+}
+
+// ── Shared: Edit/Delete action pair for a transaction row ─────────────────────
+function RowActions({ onEdit, onDelete }) {
+  if (!onEdit && !onDelete) return null;
+  return (
+    <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+      {onEdit && <button className="btn btn-ghost btn-sm" onClick={onEdit}>Edit</button>}
+      {onDelete && <button className="btn btn-danger btn-sm" onClick={onDelete}>Delete</button>}
+    </div>
+  );
+}
+
+// ── Shared: export any row-set to an .xlsx file (uses the xlsx lib already in use for bank imports) ──
+function exportRowsToExcel(fileName, rows) {
+  if (!rows || !rows.length) { alert("Nothing to export yet."); return; }
+  const ws = XLSX.utils.json_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+  XLSX.writeFile(wb, fileName.endsWith(".xlsx") ? fileName : `${fileName}.xlsx`);
+}
+
+// ── Shared: bank transactions grouped + merged by counterparty label ──────────
+// Centralizes the grouping logic that Expenses, Capital, Partners, and the Bank
+// Statement view each used to re-derive independently. Returns one row per
+// distinct counterparty label (or per raw narration key if never labeled), with
+// its `type` (from CP_TYPES) so callers can filter to what they need:
+//   - ExpensesView    -> exclude type === "owner" and type.startsWith("capital_")
+//   - CapitalRegisterView -> only type.startsWith("capital_")
+//   - PartnersCapitalDashboard -> only type === "owner"
+function useCounterpartyGroups(bankTxns, bankLabels) {
+  return useMemo(() => {
+    const raw = {};
+    (bankTxns || []).forEach(t => {
+      if (!t) return;
+      const k = t.key || t.group_key || (t.description ? normalizeDesc(t.description) : "UNKNOWN");
+      if (!raw[k]) raw[k] = { key: k, txns: [], totalDebit: 0, totalCredit: 0 };
+      raw[k].txns.push(t);
+      raw[k].totalDebit += (+t.debit || 0);
+      raw[k].totalCredit += (+t.credit || 0);
+    });
+    const merged = {};
+    Object.values(raw).forEach(g => {
+      const meta = (bankLabels || {})[g.key] || {};
+      const type = meta.type || "unlabeled";
+      const label = (meta.label && meta.label.trim()) ? meta.label.trim() : g.key;
+      const mergeKey = label.toLowerCase();
+      if (!merged[mergeKey]) {
+        merged[mergeKey] = { mergeKey, label, type, rawKeys: [], txns: [], totalDebit: 0, totalCredit: 0 };
+      }
+      merged[mergeKey].rawKeys.push(g.key);
+      merged[mergeKey].txns.push(...g.txns);
+      merged[mergeKey].totalDebit += g.totalDebit;
+      merged[mergeKey].totalCredit += g.totalCredit;
+    });
+    return Object.values(merged);
+  }, [bankTxns, bankLabels]);
+}
+
+// ── Shared: straight-line net book value for a capital asset ──────────────────
+function computeNetBookValue(category, amount, acquisitionDate) {
+  const catConfig = CAP_CATS.find(x => x.id === category) || { defaultRate: 15 };
+  const rate = catConfig.defaultRate / 100;
+  const acqDate = new Date(acquisitionDate || today());
+  const ageYears = Math.max(0, (new Date() - acqDate) / (1000 * 60 * 60 * 24 * 365.25));
+  return rate === 0 ? amount : Math.max(0, amount * Math.pow(1 - rate, ageYears));
+}
+
 // ── APP MAIN ──────────────────────────────────────────────────────────────────
 export default function App() {
   const [view, setView] = useState("dashboard");
@@ -578,7 +667,7 @@ export default function App() {
             {view === "vehicles" && <MasterTableView title="Vehicles" noun="Vehicle" items={vehicles} setItems={setVehicles} saveFn={db.saveVehicle} delFn={db.deleteVehicle} fields={[{ key:"vehicleNo", label:"Vehicle Number", required:true },{ key:"type", label:"Type" },{ key:"tareWeight", label:"Tare Wt (kg)", required:true }]} cols={[{ label:"Vehicle", key:"vehicleNo" },{ label:"Type", key:"type" },{ label:"Tare Wt", key:"tareWeight" }]} />}
             {view === "customers" && <MasterTableView title="Customers" noun="Customer" items={customers} setItems={setCustomers} saveFn={db.saveCustomer} delFn={db.deleteCustomer} fields={[{ key:"name", label:"Company Name", required:true },{ key:"gstin", label:"GSTIN" },{ key:"contact", label:"Contact Person" },{ key:"phone", label:"Phone" }]} cols={[{ label:"Name", key:"name" },{ label:"GSTIN", key:"gstin" },{ label:"Contact", key:"contact" }]} />}
             {view === "suppliers" && <MasterTableView title="Suppliers" noun="Supplier" items={suppliers} setItems={setSuppliers} saveFn={db.saveSupplier} delFn={db.deleteSupplier} fields={[{ key:"name", label:"Supplier Name", required:true },{ key:"contact", label:"Contact" }]} cols={[{ label:"Name", key:"name" },{ label:"Contact", key:"contact" }]} />}
-            {view === "grades" && <MasterTableView title="Grades" noun="Grade" items={grades} setItems={setGrades} saveFn={db.saveGrade} delFn={db.deleteGrade} fields={[{ key:"code", label:"Code", required:true },{ key:"name", label:"Grade Name", required:true }]} cols={[{ label:"Code", key:"code" },{ label:"Name", key:"name" }]} />}
+            {view === "grades" && <MasterTableView title="Grades" noun="Grade" items={grades} setItems={setGrades} saveFn={db.saveGrade} delFn={db.deleteGrade} fields={[{ key:"code", label:"Code", required:true },{ key:"name", label:"Grade Name", required:true },{ key:"reorderThresholdMT", label:"Reorder Threshold (MT)" }]} cols={[{ label:"Code", key:"code" },{ label:"Name", key:"name" },{ label:"Reorder At (MT)", key:"reorderThresholdMT" }]} />}
           </div>
         </div>
       </div>
@@ -590,33 +679,71 @@ export default function App() {
 
 function WeighmentsView({ vehicles, customers, grades, weighments, setWeighments }) {
   const [open, setOpen] = useState(false);
-  const blank = { date:today(), time:nowTime(), vehicleId:"", customerId:"", gradeId:"", lotNo:"", grossWeight:"", tareWeight:"", purpose:"Sale", remarks:"" };
+  const [editingId, setEditingId] = useState(null);
+  const [search, setSearch] = useState("");
+  const blank = { date:today(), time:nowTime(), vehicleId:"", customerId:"", gradeId:"", lotNo:"", grossWeight:"", tareWeight:"", purpose:"Sale", ratePerMT:"", invoiceNo:"", remarks:"" };
   const [f, setF] = useState(blank);
   const set = k => v => setF(x => ({ ...x, [k]: v }));
   const pickV = id => { const v = vehicles.find(x => String(x.id) === String(id)); setF(x => ({ ...x, vehicleId:id, tareWeight: v ? String(v.tareWeight) : "" })); };
   const net = () => { const g = parseFloat(f.grossWeight), t = parseFloat(f.tareWeight); return (!isNaN(g) && !isNaN(t)) ? g - t : null; };
+  const netVal = net();
+  const saleValue = f.purpose === "Sale" && f.ratePerMT && netVal > 0 ? (netVal / 1000) * (+f.ratePerMT) : null;
+
+  function openAdd() { setEditingId(null); setF(blank); setOpen(true); }
+  function openEdit(w) {
+    setEditingId(w.id);
+    setF({
+      date: w.date || today(), time: w.time || nowTime(), vehicleId: w.vehicleId ? String(w.vehicleId) : "",
+      customerId: w.customerId ? String(w.customerId) : "", gradeId: w.gradeId ? String(w.gradeId) : "",
+      lotNo: w.lotNo || "", grossWeight: String(w.grossWeight ?? ""), tareWeight: String(w.tareWeight ?? ""),
+      purpose: w.purpose || "Sale", ratePerMT: w.ratePerMT != null ? String(w.ratePerMT) : "",
+      invoiceNo: w.invoiceNo || "", remarks: w.remarks || "",
+    });
+    setOpen(true);
+  }
 
   async function save() {
     if (!f.vehicleId || !f.gradeId || !f.grossWeight || !f.tareWeight) return alert("Vehicle, Grade, Gross, and Tare required.");
-    if (net() <= 0) return alert("Net weight must be positive.");
+    if (netVal == null || netVal <= 0) return alert("Net weight must be positive.");
     try {
-      const row = await db.saveWeighment(f);
-      setWeighments(ws => [row, ...ws]);
-      setOpen(false); setF(blank);
+      const payload = editingId ? { ...f, id: editingId } : f;
+      const row = await db.saveWeighment(payload);
+      if (editingId) setWeighments(ws => ws.map(w => w.id === editingId ? row : w));
+      else setWeighments(ws => [row, ...ws]);
+      setOpen(false); setF(blank); setEditingId(null);
     } catch (err) { alert(err.message); }
   }
 
+  async function remove(id) {
+    if (!confirm("Delete this weighment slip? This cannot be undone.")) return;
+    if (typeof db.deleteWeighment !== "function") return alert("db.deleteWeighment isn't implemented yet — add it to db.js to enable deleting slips.");
+    try {
+      await db.deleteWeighment(id);
+      setWeighments(ws => ws.filter(w => w.id !== id));
+    } catch (err) { alert(err.message); }
+  }
+
+  const filtered = weighments.filter(w => {
+    if (!search) return true;
+    const s = search.toLowerCase();
+    return (w.slipNo || "").toLowerCase().includes(s) || (w.vehicleNo || "").toLowerCase().includes(s) || (w.customerName || "").toLowerCase().includes(s) || (w.invoiceNo || "").toLowerCase().includes(s);
+  });
+
   return (
     <div>
-      <div className="filter-bar"><button className="btn btn-primary" onClick={() => setOpen(true)}>+ New Weighment Slip</button></div>
+      <div className="filter-bar">
+        <button className="btn btn-primary" onClick={openAdd}>+ New Weighment Slip</button>
+        <SearchBar value={search} onChange={setSearch} placeholder="Search slip #, vehicle, customer, invoice…" />
+        <button className="btn btn-ghost btn-sm" onClick={() => exportRowsToExcel("weighments", filtered.map(w => ({ SlipNo: w.slipNo, Date: w.date, Time: w.time, Vehicle: w.vehicleNo, Customer: w.customerName, Grade: w.gradeCode, GrossKg: w.grossWeight, TareKg: w.tareWeight, NetKg: w.netWeight, Purpose: w.purpose, RatePerMT: w.ratePerMT || "", InvoiceNo: w.invoiceNo || "" })))}>⬇ Export Excel</button>
+      </div>
       <div className="table-wrap">
         <table>
-          <thead><tr><th>Slip #</th><th>Date/Time</th><th>Vehicle</th><th>Customer</th><th>Grade</th><th className="r">Gross</th><th className="r">Tare</th><th className="r">Net</th><th>Purpose</th></tr></thead>
+          <thead><tr><th>Slip #</th><th>Date/Time</th><th>Vehicle</th><th>Customer</th><th>Grade</th><th className="r">Gross</th><th className="r">Tare</th><th className="r">Net</th><th>Purpose</th><th>Invoice #</th><th className="r">Sale Value</th><th className="r">Actions</th></tr></thead>
           <tbody>
-            {weighments.length === 0 ? (
-              <tr><td colSpan={9} style={{ textAlign:"center", color:"var(--text3)", padding:24 }}>No weighment slips logged yet</td></tr>
+            {filtered.length === 0 ? (
+              <tr><td colSpan={12} style={{ textAlign:"center", color:"var(--text3)", padding:24 }}>No weighment slips logged yet</td></tr>
             ) : (
-              weighments.map(w => (
+              filtered.map(w => (
                 <tr key={w.id}>
                   <td className="mono" style={{ color:"var(--accent)" }}>{w.slipNo}</td>
                   <td className="mono" style={{ fontSize:11, color:"var(--text3)" }}>{w.date} {w.time}</td>
@@ -625,6 +752,9 @@ function WeighmentsView({ vehicles, customers, grades, weighments, setWeighments
                   <td className="r mono">{w.grossWeight} kg</td><td className="r mono">{w.tareWeight} kg</td>
                   <td className="r mono" style={{ color:"var(--teal)", fontWeight:700 }}>{fmtWt(w.netWeight)}</td>
                   <td><BadgeComponent type={w.purpose === "Sale" ? "green" : "blue"}>{w.purpose}</BadgeComponent></td>
+                  <td className="mono" style={{ fontSize:11 }}>{w.invoiceNo || "—"}</td>
+                  <td className="r mono" style={{ fontWeight:700 }}>{w.purpose === "Sale" && w.ratePerMT ? fmt(((w.netWeight||0)/1000) * (+w.ratePerMT)) : "—"}</td>
+                  <td className="r"><RowActions onEdit={() => openEdit(w)} onDelete={() => remove(w.id)} /></td>
                 </tr>
               ))
             )}
@@ -633,7 +763,7 @@ function WeighmentsView({ vehicles, customers, grades, weighments, setWeighments
       </div>
 
       {open && (
-        <Modal title="New Weighment Slip" onClose={() => setOpen(false)} foot={<><button className="btn btn-ghost" onClick={() => setOpen(false)}>Cancel</button><button className="btn btn-primary" onClick={save}>Save Slip</button></>}>
+        <Modal title={editingId ? "Edit Weighment Slip" : "New Weighment Slip"} onClose={() => { setOpen(false); setEditingId(null); }} foot={<><button className="btn btn-ghost" onClick={() => { setOpen(false); setEditingId(null); }}>Cancel</button><button className="btn btn-primary" onClick={save}>{editingId ? "Save Changes" : "Save Slip"}</button></>}>
           <div className="form-row cols-2"><FG label="Date"><input type="date" value={f.date} onChange={e => set("date")(e.target.value)} /></FG><FG label="Time"><input type="time" value={f.time} onChange={e => set("time")(e.target.value)} /></FG></div>
           <div className="form-row cols-2">
             <FG label="Vehicle *"><select value={f.vehicleId} onChange={e => pickV(e.target.value)}><option value="">Select...</option>{vehicles.map(v => <option key={v.id} value={v.id}>{v.vehicleNo} ({v.type})</option>)}</select></FG>
@@ -647,6 +777,12 @@ function WeighmentsView({ vehicles, customers, grades, weighments, setWeighments
             <FG label="Gross Weight (kg) *"><input type="number" value={f.grossWeight} onChange={e => set("grossWeight")(e.target.value)} /></FG>
             <FG label="Tare Weight (kg) *"><input type="number" value={f.tareWeight} onChange={e => set("tareWeight")(e.target.value)} /></FG>
           </div>
+          {f.purpose === "Sale" && (
+            <div className="form-row cols-2">
+              <FG label="Rate (₹/MT)" note={saleValue != null ? `Sale value: ${fmt(saleValue)}` : "Used for accurate revenue on the Balance Sheet"}><input type="number" value={f.ratePerMT} onChange={e => set("ratePerMT")(e.target.value)} /></FG>
+              <FG label="Invoice #"><input value={f.invoiceNo} onChange={e => set("invoiceNo")(e.target.value)} /></FG>
+            </div>
+          )}
           <div className="form-row"><FG label="Remarks"><input value={f.remarks} onChange={e => set("remarks")(e.target.value)} /></FG></div>
         </Modal>
       )}
@@ -656,28 +792,50 @@ function WeighmentsView({ vehicles, customers, grades, weighments, setWeighments
 
 function BoulderInView({ suppliers, vehicles, boulderReceipts, setBoulderReceipts }) {
   const [open, setOpen] = useState(false);
+  const [editingId, setEditingId] = useState(null);
   const blank = { date:today(), vehicleId:"", supplierId:"", quantityMT:"", royaltyNo:"", challanNo:"", remarks:"" };
   const [f, setF] = useState(blank);
   const set = k => v => setF(x => ({ ...x, [k]: v }));
 
+  function openAdd() { setEditingId(null); setF(blank); setOpen(true); }
+  function openEdit(r) {
+    setEditingId(r.id);
+    setF({
+      date: r.date || today(), vehicleId: r.vehicleId ? String(r.vehicleId) : "", supplierId: r.supplierId ? String(r.supplierId) : "",
+      quantityMT: String(r.quantityMT ?? ""), royaltyNo: r.royaltyNo || "", challanNo: r.challanNo || "", remarks: r.remarks || "",
+    });
+    setOpen(true);
+  }
+
   async function save() {
     if (!f.supplierId || !f.quantityMT) return alert("Supplier and Quantity required.");
     try {
-      const row = await db.saveBoulderReceipt(f);
-      setBoulderReceipts(rs => [row, ...rs]);
-      setOpen(false); setF(blank);
+      const payload = editingId ? { ...f, id: editingId } : f;
+      const row = await db.saveBoulderReceipt(payload);
+      if (editingId) setBoulderReceipts(rs => rs.map(r => r.id === editingId ? row : r));
+      else setBoulderReceipts(rs => [row, ...rs]);
+      setOpen(false); setF(blank); setEditingId(null);
+    } catch (err) { alert(err.message); }
+  }
+
+  async function remove(id) {
+    if (!confirm("Delete this boulder receipt? This cannot be undone.")) return;
+    if (typeof db.deleteBoulderReceipt !== "function") return alert("db.deleteBoulderReceipt isn't implemented yet — add it to db.js to enable deleting receipts.");
+    try {
+      await db.deleteBoulderReceipt(id);
+      setBoulderReceipts(rs => rs.filter(r => r.id !== id));
     } catch (err) { alert(err.message); }
   }
 
   return (
     <div>
-      <div className="filter-bar"><button className="btn btn-primary" onClick={() => setOpen(true)}>+ New Boulder Receipt</button></div>
+      <div className="filter-bar"><button className="btn btn-primary" onClick={openAdd}>+ New Boulder Receipt</button></div>
       <div className="table-wrap">
         <table>
-          <thead><tr><th>Receipt #</th><th>Date</th><th>Supplier</th><th>Vehicle</th><th>Royalty #</th><th>Challan #</th><th className="r">Qty (MT)</th></tr></thead>
+          <thead><tr><th>Receipt #</th><th>Date</th><th>Supplier</th><th>Vehicle</th><th>Royalty #</th><th>Challan #</th><th className="r">Qty (MT)</th><th className="r">Actions</th></tr></thead>
           <tbody>
             {boulderReceipts.length === 0 ? (
-              <tr><td colSpan={7} style={{ textAlign:"center", color:"var(--text3)", padding:24 }}>No boulder deliveries recorded yet</td></tr>
+              <tr><td colSpan={8} style={{ textAlign:"center", color:"var(--text3)", padding:24 }}>No boulder deliveries recorded yet</td></tr>
             ) : (
               boulderReceipts.map(r => (
                 <tr key={r.id}>
@@ -685,6 +843,7 @@ function BoulderInView({ suppliers, vehicles, boulderReceipts, setBoulderReceipt
                   <td className="mono" style={{ fontSize:11, color:"var(--text3)" }}>{r.date}</td>
                   <td>{r.supplierName}</td><td className="mono">{r.vehicleNo}</td><td>{r.royaltyNo || "—"}</td><td>{r.challanNo || "—"}</td>
                   <td className="r mono" style={{ color:"var(--teal)", fontWeight:700 }}>{fmtMT(r.quantityMT)}</td>
+                  <td className="r"><RowActions onEdit={() => openEdit(r)} onDelete={() => remove(r.id)} /></td>
                 </tr>
               ))
             )}
@@ -693,7 +852,7 @@ function BoulderInView({ suppliers, vehicles, boulderReceipts, setBoulderReceipt
       </div>
 
       {open && (
-        <Modal title="New Raw Boulder Receipt" onClose={() => setOpen(false)} foot={<><button className="btn btn-ghost" onClick={() => setOpen(false)}>Cancel</button><button className="btn btn-primary" onClick={save}>Save Receipt</button></>}>
+        <Modal title={editingId ? "Edit Raw Boulder Receipt" : "New Raw Boulder Receipt"} onClose={() => { setOpen(false); setEditingId(null); }} foot={<><button className="btn btn-ghost" onClick={() => { setOpen(false); setEditingId(null); }}>Cancel</button><button className="btn btn-primary" onClick={save}>{editingId ? "Save Changes" : "Save Receipt"}</button></>}>
           <div className="form-row cols-2"><FG label="Date"><input type="date" value={f.date} onChange={e => set("date")(e.target.value)} /></FG><FG label="Supplier *"><select value={f.supplierId} onChange={e => set("supplierId")(e.target.value)}><option value="">Select...</option>{suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></FG></div>
           <div className="form-row cols-2"><FG label="Vehicle"><select value={f.vehicleId} onChange={e => set("vehicleId")(e.target.value)}><option value="">Select...</option>{vehicles.map(v => <option key={v.id} value={v.id}>{v.vehicleNo}</option>)}</select></FG><FG label="Quantity (MT) *"><input type="number" step="0.001" value={f.quantityMT} onChange={e => set("quantityMT")(e.target.value)} /></FG></div>
           <div className="form-row cols-2"><FG label="Royalty Pass #"><input value={f.royaltyNo} onChange={e => set("royaltyNo")(e.target.value)} /></FG><FG label="Challan / Invoice #"><input value={f.challanNo} onChange={e => set("challanNo")(e.target.value)} /></FG></div>
@@ -729,15 +888,25 @@ function ProductionView({ grades, productionEntries, setProductionEntries, lots,
     } catch (err) { alert(err.message); }
   }
 
+  async function remove(pe) {
+    if (!confirm(`Delete production entry ${pe.entryNo} and its lot ${pe.lotNo}? This cannot be undone.`)) return;
+    if (typeof db.deleteProductionEntry !== "function") return alert("db.deleteProductionEntry isn't implemented yet — add it to db.js (it should also remove the linked lot/output rows) to enable deleting runs.");
+    try {
+      await db.deleteProductionEntry(pe.id);
+      setProductionEntries(es => es.filter(e => e.id !== pe.id));
+      setLots(ls => ls.filter(l => l.id !== pe.lotId));
+    } catch (err) { alert(err.message); }
+  }
+
   return (
     <div>
       <div className="filter-bar"><button className="btn btn-primary" onClick={() => setOpen(true)}>+ New Production Entry</button></div>
       <div className="table-wrap">
         <table>
-          <thead><tr><th>Entry #</th><th>Lot #</th><th>Date</th><th>Shift</th><th>Operator</th><th className="r">Consumed</th><th className="r">Produced</th><th>Yield</th></tr></thead>
+          <thead><tr><th>Entry #</th><th>Lot #</th><th>Date</th><th>Shift</th><th>Operator</th><th className="r">Consumed</th><th className="r">Produced</th><th>Yield</th><th className="r">Actions</th></tr></thead>
           <tbody>
             {productionEntries.length === 0 ? (
-              <tr><td colSpan={8} style={{ textAlign:"center", color:"var(--text3)", padding:24 }}>No production recorded yet</td></tr>
+              <tr><td colSpan={9} style={{ textAlign:"center", color:"var(--text3)", padding:24 }}>No production recorded yet</td></tr>
             ) : (
               productionEntries.map(pe => (
                 <tr key={pe.id}>
@@ -749,12 +918,16 @@ function ProductionView({ grades, productionEntries, setProductionEntries, lots,
                   <td className="r mono">{fmtMT(pe.boulderConsumedMT)}</td>
                   <td className="r mono" style={{ color:"var(--teal)", fontWeight:700 }}>{fmtMT(pe.totalOutputMT)}</td>
                   <td>{pe.yieldPct ? <BadgeComponent type={pe.yieldPct >= 90 ? "green" : "amber"}>{pe.yieldPct}%</BadgeComponent> : "—"}</td>
+                  <td className="r"><RowActions onDelete={() => remove(pe)} /></td>
                 </tr>
               ))
             )}
           </tbody>
         </table>
       </div>
+      <p style={{ fontSize: 11, color: "var(--text3)", marginTop: -12, marginBottom: 16 }}>
+        Editing a production run isn't supported yet — it would need to safely re-balance the linked lot and output records. Delete and re-enter if a run was logged wrong.
+      </p>
 
       {open && (
         <Modal title="New Milling Run / Production Entry" onClose={() => setOpen(false)} foot={<><button className="btn btn-ghost" onClick={() => setOpen(false)}>Cancel</button><button className="btn btn-primary" onClick={save}>Save Entry</button></>}>
@@ -803,7 +976,10 @@ function PlantReconciliationView({ reconciliations, setReconciliations, boulderR
         remarks: f.remarks
       };
 
-      const row = await db.saveReconciliation ? await db.saveReconciliation(payload) : { id: Date.now(), ...payload };
+      if (typeof db.saveReconciliation !== "function") {
+        throw new Error("db.saveReconciliation isn't implemented yet — add it to db.js before logging reconciliations (this used to fake a save that never reached the database).");
+      }
+      const row = await db.saveReconciliation(payload);
       setReconciliations(rs => [row, ...rs]);
       setOpen(false); setF(blank);
     } catch (err) { alert(err.message); }
@@ -889,9 +1065,21 @@ function PlantReconciliationView({ reconciliations, setReconciliations, boulderR
 
 function ShiftLogView({ grades, shiftLogs, setShiftLogs }) {
   const [open, setOpen] = useState(false);
+  const [editingId, setEditingId] = useState(null);
   const blank = { date:today(), shift:SHIFTS[0], operator:OPERATORS[0], machineStatus:"Running", boulderFed:"", production:[{ gradeId:grades[0]?.id||"", quantity:"" }], breakdowns:"", remarks:"" };
   const [f, setF] = useState(blank);
   const set = k => v => setF(x => ({ ...x, [k]: v }));
+
+  function openAdd() { setEditingId(null); setF(blank); setOpen(true); }
+  function openEdit(l) {
+    setEditingId(l.id);
+    setF({
+      date: l.date || today(), shift: l.shift || SHIFTS[0], operator: l.operator || OPERATORS[0],
+      machineStatus: l.machineStatus || "Running", boulderFed: String(l.boulderFed ?? ""),
+      production: [{ gradeId: grades[0]?.id || "", quantity: "" }], breakdowns: l.breakdowns || "", remarks: l.remarks || "",
+    });
+    setOpen(true);
+  }
 
   async function save() {
     if (!f.boulderFed) return alert("Boulder fed is required.");
@@ -900,21 +1088,32 @@ function ShiftLogView({ grades, shiftLogs, setShiftLogs }) {
         const g = grades.find(gx => String(gx.id) === String(p.gradeId));
         return { gradeId: +p.gradeId, quantity: +p.quantity, gradeCode: g?.code, gradeName: g?.name };
       });
-      const row = await db.saveShiftLog(f, enriched);
-      setShiftLogs(ls => [row, ...ls]);
-      setOpen(false); setF(blank);
+      const payload = editingId ? { ...f, id: editingId } : f;
+      const row = await db.saveShiftLog(payload, enriched);
+      if (editingId) setShiftLogs(ls => ls.map(l => l.id === editingId ? row : l));
+      else setShiftLogs(ls => [row, ...ls]);
+      setOpen(false); setF(blank); setEditingId(null);
+    } catch (err) { alert(err.message); }
+  }
+
+  async function remove(id) {
+    if (!confirm("Delete this shift log? This cannot be undone.")) return;
+    if (typeof db.deleteShiftLog !== "function") return alert("db.deleteShiftLog isn't implemented yet — add it to db.js to enable deleting logs.");
+    try {
+      await db.deleteShiftLog(id);
+      setShiftLogs(ls => ls.filter(l => l.id !== id));
     } catch (err) { alert(err.message); }
   }
 
   return (
     <div>
-      <div className="filter-bar"><button className="btn btn-primary" onClick={() => setOpen(true)}>+ New Shift Log</button></div>
+      <div className="filter-bar"><button className="btn btn-primary" onClick={openAdd}>+ New Shift Log</button></div>
       <div className="table-wrap">
         <table>
-          <thead><tr><th>Log #</th><th>Date</th><th>Shift</th><th>Operator</th><th>Status</th><th className="r">Fed (MT)</th><th>Breakdowns</th></tr></thead>
+          <thead><tr><th>Log #</th><th>Date</th><th>Shift</th><th>Operator</th><th>Status</th><th className="r">Fed (MT)</th><th>Breakdowns</th><th className="r">Actions</th></tr></thead>
           <tbody>
             {shiftLogs.length === 0 ? (
-              <tr><td colSpan={7} style={{ textAlign:"center", color:"var(--text3)", padding:24 }}>No shift logs recorded yet</td></tr>
+              <tr><td colSpan={8} style={{ textAlign:"center", color:"var(--text3)", padding:24 }}>No shift logs recorded yet</td></tr>
             ) : (
               shiftLogs.map(l => (
                 <tr key={l.id}>
@@ -925,6 +1124,7 @@ function ShiftLogView({ grades, shiftLogs, setShiftLogs }) {
                   <td><BadgeComponent type={l.machineStatus === "Running" ? "green" : "red"}>{l.machineStatus}</BadgeComponent></td>
                   <td className="r mono">{l.boulderFed}</td>
                   <td style={{ fontSize:12 }}>{l.breakdowns || "None"}</td>
+                  <td className="r"><RowActions onEdit={() => openEdit(l)} onDelete={() => remove(l.id)} /></td>
                 </tr>
               ))
             )}
@@ -933,7 +1133,7 @@ function ShiftLogView({ grades, shiftLogs, setShiftLogs }) {
       </div>
 
       {open && (
-        <Modal title="Record Shift Operating Log" onClose={() => setOpen(false)} foot={<><button className="btn btn-ghost" onClick={() => setOpen(false)}>Cancel</button><button className="btn btn-primary" onClick={save}>Save Log</button></>}>
+        <Modal title={editingId ? "Edit Shift Operating Log" : "Record Shift Operating Log"} onClose={() => { setOpen(false); setEditingId(null); }} foot={<><button className="btn btn-ghost" onClick={() => { setOpen(false); setEditingId(null); }}>Cancel</button><button className="btn btn-primary" onClick={save}>{editingId ? "Save Changes" : "Save Log"}</button></>}>
           <div className="form-row cols-2"><FG label="Date"><input type="date" value={f.date} onChange={e => set("date")(e.target.value)} /></FG><FG label="Shift"><select value={f.shift} onChange={e => set("shift")(e.target.value)}>{SHIFTS.map(s => <option key={s}>{s}</option>)}</select></FG></div>
           <div className="form-row cols-2"><FG label="Operator"><select value={f.operator} onChange={e => set("operator")(e.target.value)}>{OPERATORS.map(o => <option key={o}>{o}</option>)}</select></FG><FG label="Boulder Fed (MT) *"><input type="number" value={f.boulderFed} onChange={e => set("boulderFed")(e.target.value)} /></FG></div>
           <div className="form-row"><FG label="Breakdowns / Downtime"><input placeholder="e.g. 30 min classifier mesh choke" value={f.breakdowns} onChange={e => set("breakdowns")(e.target.value)} /></FG></div>
@@ -949,18 +1149,22 @@ function StockLedgerView({ grades, boulderReceipts, productionEntries, weighment
     <div className="table-wrap">
       <div className="table-toolbar"><h3>Material Inventory Balance (Real-Time Calculation)</h3></div>
       <table>
-        <thead><tr><th>Grade</th><th>Type</th><th className="r">Total Inflow / Produced</th><th className="r">Total Outflow / Sold</th><th className="r">Closing Stock Balance</th><th>Status</th></tr></thead>
+        <thead><tr><th>Grade</th><th>Type</th><th className="r">Total Inflow / Produced</th><th className="r">Total Outflow / Sold</th><th className="r">Closing Stock Balance</th><th className="r">Reorder At</th><th>Status</th></tr></thead>
         <tbody>
-          {Object.values(stock).map(s => (
-            <tr key={s.gradeId}>
-              <td><BadgeComponent type={s.isBoulder ? "teal" : "muted"}>{s.code}</BadgeComponent> {s.name}</td>
-              <td><BadgeComponent type={s.isBoulder ? "teal" : "blue"}>{s.isBoulder ? "Raw Material" : "Finished Product"}</BadgeComponent></td>
-              <td className="r mono" style={{ color:"var(--teal)" }}>{fmtMT(s.isBoulder ? s.in : s.produced)}</td>
-              <td className="r mono" style={{ color:"var(--amber)" }}>{fmtMT(s.isBoulder ? Math.abs(s.produced) : s.sold)}</td>
-              <td className="r mono" style={{ fontWeight:700, color: s.closing < 0 ? "var(--red)" : "var(--accent)" }}>{fmtMT(s.closing)}</td>
-              <td><BadgeComponent type={s.closing < 0 ? "red" : s.closing < 10 ? "amber" : "green"}>{s.closing < 0 ? "Negative" : s.closing < 10 ? "Low" : "Optimal"}</BadgeComponent></td>
-            </tr>
-          ))}
+          {Object.values(stock).map(s => {
+            const threshold = +s.reorderThresholdMT > 0 ? +s.reorderThresholdMT : 10;
+            return (
+              <tr key={s.gradeId}>
+                <td><BadgeComponent type={s.isBoulder ? "teal" : "muted"}>{s.code}</BadgeComponent> {s.name}</td>
+                <td><BadgeComponent type={s.isBoulder ? "teal" : "blue"}>{s.isBoulder ? "Raw Material" : "Finished Product"}</BadgeComponent></td>
+                <td className="r mono" style={{ color:"var(--teal)" }}>{fmtMT(s.isBoulder ? s.in : s.produced)}</td>
+                <td className="r mono" style={{ color:"var(--amber)" }}>{fmtMT(s.isBoulder ? Math.abs(s.produced) : s.sold)}</td>
+                <td className="r mono" style={{ fontWeight:700, color: s.closing < 0 ? "var(--red)" : "var(--accent)" }}>{fmtMT(s.closing)}</td>
+                <td className="r mono" style={{ color:"var(--text3)" }}>{fmtMT(threshold)}</td>
+                <td><BadgeComponent type={s.closing < 0 ? "red" : s.closing < threshold ? "amber" : "green"}>{s.closing < 0 ? "Negative" : s.closing < threshold ? "Low" : "Optimal"}</BadgeComponent></td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -971,6 +1175,7 @@ function StockLedgerView({ grades, boulderReceipts, productionEntries, weighment
 
 function PurchasesView({ suppliers, purchases, setPurchases }) {
   const [open, setOpen] = useState(false);
+  const [editingId, setEditingId] = useState(null);
   const [expandedSupplier, setExpandedSupplier] = useState(null);
   const [search, setSearch] = useState("");
 
@@ -978,12 +1183,34 @@ function PurchasesView({ suppliers, purchases, setPurchases }) {
   const [f, setF] = useState(blank);
   const set = k => v => setF(x => ({ ...x, [k]: v }));
 
+  function openAdd() { setEditingId(null); setF(blank); setOpen(true); }
+  function openEdit(p) {
+    setEditingId(p.id);
+    setF({
+      date: p.date || today(), supplierId: p.supplierId ? String(p.supplierId) : "", description: p.description || "",
+      quantityMT: String(p.quantityMT ?? ""), ratePerMT: String(p.ratePerMT ?? ""), gstPct: String(p.gstPct ?? "5"),
+      invoiceNo: p.invoiceNo || "", remarks: p.remarks || "",
+    });
+    setOpen(true);
+  }
+
   async function save() {
     if (!f.supplierId || !f.quantityMT || !f.ratePerMT) return alert("Supplier, Quantity, and Rate required.");
     try {
-      const row = await db.savePurchase(f);
-      setPurchases(ps => [row, ...ps]);
-      setOpen(false); setF(blank);
+      const payload = editingId ? { ...f, id: editingId } : f;
+      const row = await db.savePurchase(payload);
+      if (editingId) setPurchases(ps => ps.map(p => p.id === editingId ? row : p));
+      else setPurchases(ps => [row, ...ps]);
+      setOpen(false); setF(blank); setEditingId(null);
+    } catch (err) { alert(err.message); }
+  }
+
+  async function remove(id) {
+    if (!confirm("Delete this purchase order? This cannot be undone.")) return;
+    if (typeof db.deletePurchase !== "function") return alert("db.deletePurchase isn't implemented yet — add it to db.js to enable deleting POs.");
+    try {
+      await db.deletePurchase(id);
+      setPurchases(ps => ps.filter(p => p.id !== id));
     } catch (err) { alert(err.message); }
   }
 
@@ -1018,7 +1245,7 @@ function PurchasesView({ suppliers, purchases, setPurchases }) {
           <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>Raw Material Purchases & Supplier Ledger</h3>
           <p style={{ fontSize: 12, color: "var(--text3)" }}>Track raw boulder deliveries, supplier rates, and purchase order invoices.</p>
         </div>
-        <button className="btn btn-primary" onClick={() => setOpen(true)}>+ New RM Purchase Order</button>
+        <button className="btn btn-primary" onClick={openAdd}>+ New RM Purchase Order</button>
       </div>
 
       <div className="stats-grid">
@@ -1029,12 +1256,8 @@ function PurchasesView({ suppliers, purchases, setPurchases }) {
       </div>
 
       <div className="filter-bar">
-        <input
-          placeholder="Search supplier or invoice #…"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          style={{ background: "var(--bg3)", border: "1px solid var(--border2)", borderRadius: "var(--r)", padding: "7px 11px", color: "var(--text)", fontSize: 12.5, minWidth: 260 }}
-        />
+        <SearchBar value={search} onChange={setSearch} placeholder="Search supplier or invoice #…" />
+        <button className="btn btn-ghost btn-sm" onClick={() => exportRowsToExcel("purchases", (purchases || []).map(p => ({ PO: p.poNo, Date: p.date, Supplier: p.supplierName, Invoice: p.invoiceNo || "", QtyMT: p.quantityMT, RatePerMT: p.ratePerMT, GST: p.gstPct, TotalAmount: p.totalAmount })))}>⬇ Export Excel</button>
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -1077,6 +1300,7 @@ function PurchasesView({ suppliers, purchases, setPurchases }) {
                         <th className="r">Qty (MT)</th>
                         <th className="r">Rate / MT</th>
                         <th className="r">Total Amount</th>
+                        <th className="r">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1088,6 +1312,7 @@ function PurchasesView({ suppliers, purchases, setPurchases }) {
                           <td className="r mono">{fmtMT(p.quantityMT)}</td>
                           <td className="r mono">₹{p.ratePerMT}</td>
                           <td className="r mono" style={{ fontWeight: 700, color: "var(--amber)" }}>{fmt(p.totalAmount)}</td>
+                          <td className="r"><RowActions onEdit={() => openEdit(p)} onDelete={() => remove(p.id)} /></td>
                         </tr>
                       ))}
                     </tbody>
@@ -1100,7 +1325,7 @@ function PurchasesView({ suppliers, purchases, setPurchases }) {
       </div>
 
       {open && (
-        <Modal title="Record Raw Material Purchase" onClose={() => setOpen(false)} foot={<><button className="btn btn-ghost" onClick={() => setOpen(false)}>Cancel</button><button className="btn btn-primary" onClick={save}>Save Purchase</button></>}>
+        <Modal title={editingId ? "Edit Raw Material Purchase" : "Record Raw Material Purchase"} onClose={() => { setOpen(false); setEditingId(null); }} foot={<><button className="btn btn-ghost" onClick={() => { setOpen(false); setEditingId(null); }}>Cancel</button><button className="btn btn-primary" onClick={save}>{editingId ? "Save Changes" : "Save Purchase"}</button></>}>
           <div className="form-row cols-2">
             <FG label="Date"><input type="date" value={f.date} onChange={e => set("date")(e.target.value)} /></FG>
             <FG label="Supplier *">
@@ -1168,6 +1393,7 @@ function MonthlyOpsCostsView({ expenses, setExpenses }) {
 
 function ExpensesView({ expenses, setExpenses, bankTxns, bankLabels }) {
   const [open, setOpen] = useState(false);
+  const [editingId, setEditingId] = useState(null);
   const [expandedGroup, setExpandedGroup] = useState(null);
   const [search, setSearch] = useState("");
   const [selectedVendorForStmt, setSelectedVendorForStmt] = useState(null);
@@ -1176,50 +1402,56 @@ function ExpensesView({ expenses, setExpenses, bankTxns, bankLabels }) {
   const [f, setF] = useState(blank);
   const set = k => v => setF(x => ({ ...x, [k]: v }));
 
+  function openAdd() { setEditingId(null); setF(blank); setOpen(true); }
+  function openEdit(e) {
+    setEditingId(e.id);
+    setF({
+      date: e.date || today(), category: e.category || "fuel", amount: String(e.amount ?? ""),
+      description: e.description || "", paidTo: e.paidTo || "", reference: e.reference || "",
+      paymentMode: e.paymentMode || "bank", totalDue: e.totalDue != null ? String(e.totalDue) : "",
+    });
+    setOpen(true);
+  }
+
   async function save() {
     if (!f.amount || !f.description) return alert("Amount and description required.");
     try {
-      const row = await db.saveExpense(f);
-      setExpenses(es => [row, ...es]);
-      setOpen(false); setF(blank);
+      const payload = editingId ? { ...f, id: editingId } : f;
+      const row = await db.saveExpense(payload);
+      if (editingId) setExpenses(es => es.map(e => e.id === editingId ? row : e));
+      else setExpenses(es => [row, ...es]);
+      setOpen(false); setF(blank); setEditingId(null);
     } catch (err) { alert(err.message); }
   }
+
+  async function remove(id) {
+    if (!confirm("Delete this expense entry? This cannot be undone.")) return;
+    if (typeof db.deleteExpense !== "function") return alert("db.deleteExpense isn't implemented yet — add it to db.js to enable deleting manual entries.");
+    try {
+      await db.deleteExpense(id);
+      setExpenses(es => es.filter(e => e.id !== id));
+    } catch (err) { alert(err.message); }
+  }
+
+  const bankGroups = useCounterpartyGroups(bankTxns, bankLabels);
 
   const expenseGroups = useMemo(() => {
     const map = {};
 
-    (bankTxns || []).forEach(t => {
-      if (!t || !t.debit || t.debit <= 0) return;
-      const k = t.key || t.group_key || (t.description ? normalizeDesc(t.description) : "UNKNOWN");
-      const meta = (bankLabels || {})[k] || {};
-      const vendorName = (meta.label && meta.label.trim()) ? meta.label.trim() : k;
-      const cpType = meta.type || "unlabeled";
-
-      // EXCLUDE OWNER AND CAPITAL ITEMS FROM EXPENSES
-      if (cpType === "owner" || cpType.startsWith("capital_")) return;
-
-      const groupKey = vendorName.toLowerCase();
+    bankGroups.forEach(g => {
+      // Owner/capital counterparties are tracked on the Partners and Capital & Infra
+      // screens respectively, not here.
+      if (g.type === "owner" || g.type.startsWith("capital_")) return;
+      if (!g.totalDebit) return;
+      const groupKey = g.label.toLowerCase();
       if (!map[groupKey]) {
-        map[groupKey] = {
-          groupKey,
-          vendorName,
-          type: cpType,
-          totalPaid: 0,
-          totalDue: 0,
-          txns: []
-        };
+        map[groupKey] = { groupKey, vendorName: g.label, type: g.type, totalPaid: 0, totalDue: 0, txns: [] };
       }
-      map[groupKey].totalPaid += (+t.debit || 0);
-      map[groupKey].txns.push({
-        id: `bank-${t.id}`,
-        date: t.date || t.txn_date,
-        description: t.description,
-        amount: +t.debit,
-        source: "Bank Statement"
+      map[groupKey].totalPaid += g.totalDebit;
+      g.txns.filter(t => t.debit > 0).forEach(t => {
+        map[groupKey].txns.push({ id: `bank-${t.id}`, date: t.date || t.txn_date, description: t.description, amount: +t.debit, source: "Bank Statement" });
       });
     });
-
-    // ... rest of expenses processing ...
 
     (expenses || []).forEach(e => {
       if (!e) return;
@@ -1245,12 +1477,14 @@ function ExpensesView({ expenses, setExpenses, bankTxns, bankLabels }) {
         date: e.date,
         description: e.description,
         amount: amt,
-        source: "Manual Entry"
+        source: "Manual Entry",
+        editable: true,
+        rawId: e.id,
       });
     });
 
     return Object.values(map).sort((a, b) => (b.totalPaid + b.totalDue) - (a.totalPaid + a.totalDue));
-  }, [bankTxns, bankLabels, expenses]);
+  }, [bankGroups, expenses]);
 
   const filteredGroups = expenseGroups.filter(g => {
     if (!search) return true;
@@ -1267,7 +1501,7 @@ function ExpensesView({ expenses, setExpenses, bankTxns, bankLabels }) {
           <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>Vendor Expenses & Payable Tracking</h3>
           <p style={{ fontSize: 12, color: "var(--text3)" }}>Manage vendor disbursements, invoices, and pending payment obligations.</p>
         </div>
-        <button className="btn btn-primary" onClick={() => setOpen(true)}>+ Add Expense / Invoice Due</button>
+        <button className="btn btn-primary" onClick={openAdd}>+ Add Expense / Invoice Due</button>
       </div>
 
       <div className="stats-grid">
@@ -1278,12 +1512,8 @@ function ExpensesView({ expenses, setExpenses, bankTxns, bankLabels }) {
       </div>
 
       <div className="filter-bar">
-        <input
-          placeholder="Search vendor or description…"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          style={{ background: "var(--bg3)", border: "1px solid var(--border2)", borderRadius: "var(--r)", padding: "7px 11px", color: "var(--text)", fontSize: 12.5, minWidth: 260 }}
-        />
+        <SearchBar value={search} onChange={setSearch} placeholder="Search vendor or description…" />
+        <button className="btn btn-ghost btn-sm" onClick={() => exportRowsToExcel("expenses", filteredGroups.flatMap(g => g.txns.map(t => ({ Vendor: g.vendorName, Category: g.type, Date: t.date, Description: t.description, Source: t.source, Amount: t.amount }))))}>⬇ Export Excel</button>
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -1329,6 +1559,7 @@ function ExpensesView({ expenses, setExpenses, bankTxns, bankLabels }) {
                         <th>Narration / Description</th>
                         <th>Source</th>
                         <th className="r">Amount</th>
+                        <th className="r">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1338,6 +1569,14 @@ function ExpensesView({ expenses, setExpenses, bankTxns, bankLabels }) {
                           <td style={{ fontSize: 12 }}>{t.description}</td>
                           <td><BadgeComponent type={t.source === "Bank Statement" ? "blue" : "accent"}>{t.source}</BadgeComponent></td>
                           <td className="r mono" style={{ fontSize: 11, color: "var(--red)", fontWeight: 700 }}>{fmt(t.amount)}</td>
+                          <td className="r">
+                            {t.editable && (
+                              <RowActions
+                                onEdit={() => openEdit((expenses || []).find(e => e.id === t.rawId))}
+                                onDelete={() => remove(t.rawId)}
+                              />
+                            )}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -1393,7 +1632,7 @@ function ExpensesView({ expenses, setExpenses, bankTxns, bankLabels }) {
       )}
 
       {open && (
-        <Modal title="Record Expense / Vendor Invoice Due" onClose={() => setOpen(false)} foot={<><button className="btn btn-ghost" onClick={() => setOpen(false)}>Cancel</button><button className="btn btn-primary" onClick={save}>Save Entry</button></>}>
+        <Modal title={editingId ? "Edit Expense / Invoice Due" : "Record Expense / Vendor Invoice Due"} onClose={() => { setOpen(false); setEditingId(null); }} foot={<><button className="btn btn-ghost" onClick={() => { setOpen(false); setEditingId(null); }}>Cancel</button><button className="btn btn-primary" onClick={save}>{editingId ? "Save Changes" : "Save Entry"}</button></>}>
           <div className="form-row cols-2">
             <FG label="Date"><input type="date" value={f.date} onChange={e => set("date")(e.target.value)} /></FG>
             <FG label="Category">
@@ -1423,24 +1662,39 @@ function ExpensesView({ expenses, setExpenses, bankTxns, bankLabels }) {
   );
 }
 
-function CapitalRegisterView({ capitalItems, bankTxns, bankLabels }) {
+function CapitalRegisterView({ capitalItems, setCapitalItems, bankTxns, bankLabels }) {
   const [open, setOpen] = useState(false);
+  const [editingId, setEditingId] = useState(null);
   const [expandedVendor, setExpandedVendor] = useState(null);
   const [search, setSearch] = useState("");
 
-  const blank = { date: today(), category: "machinery", subCategory: "", description: "", amount: "", paidTo: "", reference: "", fundedBy: "own", paymentMode: "bank", paidByPartner: "" };
+  const blank = { date: today(), category: "machinery", subCategory: "", description: "", amount: "", totalDue: "", paidTo: "", reference: "", fundedBy: "own", paymentMode: "bank", paidByPartner: "" };
   const [f, setF] = useState(blank);
   const set = k => v => setF(x => ({ ...x, [k]: v }));
+
+  function openAdd() { setEditingId(null); setF(blank); setOpen(true); }
+  function openEdit(c) {
+    setEditingId(c.id);
+    setF({
+      date: c.date || today(), category: c.category || "machinery", subCategory: c.subCategory || "",
+      description: c.description || "", amount: String(c.amount ?? ""), totalDue: c.totalDue != null ? String(c.totalDue) : "",
+      paidTo: c.paidTo || "", reference: c.reference || "", fundedBy: c.fundedBy || "own",
+      paymentMode: c.paymentMode || "bank", paidByPartner: c.paidByPartner || "",
+    });
+    setOpen(true);
+  }
 
   async function save() {
     if (!f.amount || !f.description) return alert("Amount and description required.");
     try {
       const payload = {
+        ...(editingId ? { id: editingId } : {}),
         date: f.date,
         category: f.category,
         subCategory: f.subCategory || f.paidTo || "General Asset",
         description: f.description,
         amount: +f.amount,
+        totalDue: f.totalDue,
         paidTo: f.paidTo,
         reference: f.reference,
         fundedBy: f.fundedBy,
@@ -1448,89 +1702,102 @@ function CapitalRegisterView({ capitalItems, bankTxns, bankLabels }) {
         paidByPartner: f.paidByPartner
       };
       const row = await db.saveCapitalItem(payload);
-      setCapitalItems(cs => [row, ...cs]);
-      setOpen(false); setF(blank);
+      if (editingId) setCapitalItems(cs => cs.map(c => c.id === editingId ? row : c));
+      else setCapitalItems(cs => [row, ...cs]);
+      setOpen(false); setF(blank); setEditingId(null);
     } catch (err) { alert(err.message); }
   }
 
-  // Build rows directly from bank statement and manual entries, grouping by parent label
+  async function remove(id) {
+    if (!confirm("Delete this capital asset entry? This cannot be undone.")) return;
+    if (typeof db.deleteCapitalItem !== "function") return alert("db.deleteCapitalItem isn't implemented yet — add it to db.js to enable deleting manual entries.");
+    try {
+      await db.deleteCapitalItem(id);
+      setCapitalItems(cs => cs.filter(c => c.id !== id));
+    } catch (err) { alert(err.message); }
+  }
+
+  const bankGroups = useCounterpartyGroups(bankTxns, bankLabels);
+
+  // Build rows from both manual entries and bank statement groups tagged capital_*,
+  // each carrying its own net book value and any remaining due amount.
   const allCapitalRows = useMemo(() => {
     const list = [];
-    const currentDate = new Date();
 
-    // EXCLUDE MANUAL ENTRIES COMPLETELY (Uncomment or remove this section to stop manual records from showing)
-    /* 
     (capitalItems || []).forEach(c => {
-      ...
-    }); 
-    */
+      if (!c) return;
+      const amount = +c.amount || 0;
+      const totalDue = Math.max(0, (+c.totalDue || 0) - amount);
+      list.push({
+        id: `manual-${c.id}`,
+        rawId: c.id,
+        category: c.category || "other",
+        vendorName: (c.subCategory || c.paidTo || "General").trim() || "General",
+        date: c.date,
+        description: c.description,
+        amount,
+        totalDue,
+        netBookValue: computeNetBookValue(c.category, amount, c.date),
+        source: "Manual Entry",
+        editable: true,
+      });
+    });
 
-    // 2. Process Bank Transactions mapped via bank_labels
-    (bankTxns || []).forEach(t => {
-      if (!t || !t.debit || t.debit <= 0) return;
-      const k = t.key || t.group_key || (t.description ? normalizeDesc(t.description) : "UNKNOWN");
-      const meta = (bankLabels || {})[k] || {};
-      const type = meta.type || "unlabeled";
+    bankGroups.forEach(g => {
+      if (!g.type.startsWith("capital_")) return;
+      let cat = "machinery";
+      if (g.type === "capital_land") cat = "land";
+      else if (g.type === "capital_electrical") cat = "electrical";
+      else if (g.type === "capital_vehicles") cat = "vehicle";
 
-      if (type.startsWith("capital_")) {
-        const parentLabel = (meta.label && meta.label.trim()) ? meta.label.trim().toUpperCase() : normalizeDesc(t.description);
-
-        let cat = "machinery";
-        if (type === "capital_land") cat = "land";
-        else if (type === "capital_electrical") cat = "electrical";
-        else if (type === "capital_vehicles") cat = "vehicle";
-
-        const catConfig = CAP_CATS.find(x => x.id === cat) || { defaultRate: 15 };
-        const rate = catConfig.defaultRate / 100;
-
-        const acqDate = new Date(t.date || t.txn_date || today());
-        const ageYears = Math.max(0, (currentDate - acqDate) / (1000 * 60 * 60 * 24 * 365.25));
-        const originalAmount = +t.debit || 0;
-        const netBookValue = rate === 0 ? originalAmount : Math.max(0, originalAmount * Math.pow(1 - rate, ageYears));
-
+      g.txns.filter(t => t.debit > 0).forEach(t => {
+        const amount = +t.debit || 0;
         list.push({
           id: `bank-${t.id}`,
           category: cat,
-          vendorName: parentLabel,
+          vendorName: g.label.toUpperCase(),
           date: t.date || t.txn_date,
           description: t.description,
-          amount: originalAmount,
-          netBookValue,
-          source: "Bank Statement"
+          amount,
+          totalDue: 0,
+          netBookValue: computeNetBookValue(cat, amount, t.date || t.txn_date),
+          source: "Bank Statement",
         });
-      }
+      });
     });
 
     return list.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
-  }, [bankTxns, bankLabels]); // Removed capitalItems from dependencies since manual entries are bypassed
+  }, [capitalItems, bankGroups]);
 
   // Group vendors directly by category -> Vendor Label name
   const categoryGroups = useMemo(() => {
     const map = {};
     CAP_CATS.forEach(c => {
-      map[c.id] = { categoryId: c.id, label: c.label, totalCost: 0, totalNBV: 0, vendorsMap: {} };
+      map[c.id] = { categoryId: c.id, label: c.label, totalCost: 0, totalNBV: 0, totalDue: 0, vendorsMap: {} };
     });
 
     allCapitalRows.forEach(item => {
       const cat = item.category || "other";
       if (!map[cat]) {
-        map[cat] = { categoryId: cat, label: cat.toUpperCase(), totalCost: 0, totalNBV: 0, vendorsMap: {} };
+        map[cat] = { categoryId: cat, label: cat.toUpperCase(), totalCost: 0, totalNBV: 0, totalDue: 0, vendorsMap: {} };
       }
       map[cat].totalCost += item.amount;
       map[cat].totalNBV += item.netBookValue;
+      map[cat].totalDue += item.totalDue || 0;
 
       const vName = (item.vendorName || "General").trim();
       const vKey = vName.toLowerCase();
       if (!map[cat].vendorsMap[vKey]) {
-        map[cat].vendorsMap[vKey] = { vendorKey: `${cat}-${vKey}`, vendorName: vName, totalCost: 0, totalNBV: 0, txns: [] };
+        map[cat].vendorsMap[vKey] = { vendorKey: `${cat}-${vKey}`, vendorName: vName, totalCost: 0, totalNBV: 0, totalDue: 0, txns: [] };
       }
       map[cat].vendorsMap[vKey].totalCost += item.amount;
       map[cat].vendorsMap[vKey].totalNBV += item.netBookValue;
+      map[cat].vendorsMap[vKey].totalDue += item.totalDue || 0;
       map[cat].vendorsMap[vKey].txns.push(item);
     });
 
     return Object.values(map)
-      .filter(g => g.totalCost > 0)
+      .filter(g => g.totalCost > 0 || g.totalDue > 0)
       .map(g => ({
         ...g,
         vendors: Object.values(g.vendorsMap).sort((a, b) => b.totalCost - a.totalCost)
@@ -1545,31 +1812,28 @@ function CapitalRegisterView({ capitalItems, bankTxns, bankLabels }) {
 
   const totalCapexAll = allCapitalRows.reduce((s, c) => s + c.amount, 0);
   const totalBookValAll = allCapitalRows.reduce((s, c) => s + c.netBookValue, 0);
+  const totalDueAll = allCapitalRows.reduce((s, c) => s + (c.totalDue || 0), 0);
 
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
         <div>
           <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>Capital & Infrastructure Assets (Capex)</h3>
-          <p style={{ fontSize: 12, color: "var(--text3)" }}>Gross Invested: <strong style={{ color: "var(--accent)" }}>{fmt(totalCapexAll)}</strong> | Net Book Value: <strong style={{ color: "var(--teal)" }}>{fmt(totalBookValAll)}</strong></p>
+          <p style={{ fontSize: 12, color: "var(--text3)" }}>Gross Invested: <strong style={{ color: "var(--accent)" }}>{fmt(totalCapexAll)}</strong> | Net Book Value: <strong style={{ color: "var(--teal)" }}>{fmt(totalBookValAll)}</strong>{totalDueAll > 0 && <> | Pending Due: <strong style={{ color: "var(--amber)" }}>{fmt(totalDueAll)}</strong></>}</p>
         </div>
-        <button className="btn btn-primary" onClick={() => setOpen(true)}>+ Add Fixed Asset</button>
+        <button className="btn btn-primary" onClick={openAdd}>+ Add Fixed Asset</button>
       </div>
 
       <div className="stats-grid">
         <StatCard label="Gross Capital Invested" value={fmt(totalCapexAll)} color="accent" sub="Historical cost" />
         <StatCard label="Net Book Value" value={fmt(totalBookValAll)} color="teal" sub="Post-depreciation value" />
-        <StatCard label="Active Asset Blocks" value={categoryGroups.length} color="blue" sub="Categories utilized" />
+        <StatCard label="Pending Invoice Due" value={fmt(totalDueAll)} color="amber" sub="Owed on part-paid assets" />
         <StatCard label="Registered Items" value={allCapitalRows.length} color="purple" sub="Total asset records" />
       </div>
 
       <div className="filter-bar">
-        <input
-          placeholder="Search asset block, vendor, or description…"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          style={{ background: "var(--bg3)", border: "1px solid var(--border2)", borderRadius: "var(--r)", padding: "7px 11px", color: "var(--text)", fontSize: 12.5, minWidth: 280 }}
-        />
+        <SearchBar value={search} onChange={setSearch} placeholder="Search asset block, vendor, or description…" style={{ minWidth: 280 }} />
+        <button className="btn btn-ghost btn-sm" onClick={() => exportRowsToExcel("capital_assets", allCapitalRows.map(r => ({ Category: r.category, Vendor: r.vendorName, Date: r.date, Description: r.description, Amount: r.amount, PendingDue: r.totalDue, NetBookValue: Math.round(r.netBookValue), Source: r.source })))}>⬇ Export Excel</button>
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
@@ -1580,7 +1844,7 @@ function CapitalRegisterView({ capitalItems, bankTxns, bankLabels }) {
         ) : (
           filteredGroups.map(g => (
             <div key={g.categoryId} className="config-card" style={{ padding: 16 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid var(--border)", paddingBottom: 10, marginBottom: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid var(--border)", paddingBottom: 10, marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
                 <div>
                   <div style={{ fontSize: 10, color: "var(--text3)", fontFamily: "var(--mono)", textTransform: "uppercase" }}>Asset Block</div>
                   <div style={{ fontSize: 16, fontWeight: 700, color: "var(--text)", marginTop: 2 }}>{g.label}</div>
@@ -1588,6 +1852,7 @@ function CapitalRegisterView({ capitalItems, bankTxns, bankLabels }) {
                 <div style={{ display: "flex", gap: 16, fontFamily: "var(--mono)", fontSize: 12 }}>
                   <div>Gross Cost: <span style={{ color: "var(--accent)", fontWeight: 700 }}>{fmt(g.totalCost)}</span></div>
                   <div>Net Book Value: <span style={{ color: "var(--teal)", fontWeight: 700 }}>{fmt(g.totalNBV)}</span></div>
+                  {g.totalDue > 0 && <div>Due: <span style={{ color: "var(--amber)", fontWeight: 700 }}>{fmt(g.totalDue)}</span></div>}
                 </div>
               </div>
 
@@ -1601,6 +1866,7 @@ function CapitalRegisterView({ capitalItems, bankTxns, bankLabels }) {
                       </div>
                       <div style={{ display: "flex", gap: 16, fontFamily: "var(--mono)", fontSize: 12, alignItems: "center" }}>
                         <div>PAID: <span style={{ color: "var(--accent)", fontWeight: 700 }}>{fmt(v.totalCost)}</span></div>
+                        {v.totalDue > 0 && <div><span className="due-badge">DUE {fmt(v.totalDue)}</span></div>}
                         <div>NET VALUE: <span style={{ color: "var(--teal)", fontWeight: 700 }}>{fmt(v.totalNBV)}</span></div>
                         <button className="btn btn-ghost btn-sm" onClick={() => setExpandedVendor(x => x === v.vendorKey ? null : v.vendorKey)}>
                           {expandedVendor === v.vendorKey ? `Hide transactions (${v.txns.length})` : `View transactions (${v.txns.length})`}
@@ -1617,7 +1883,9 @@ function CapitalRegisterView({ capitalItems, bankTxns, bankLabels }) {
                               <th>Narration / Description</th>
                               <th>Source</th>
                               <th className="r">Amount</th>
+                              <th className="r">Due</th>
                               <th className="r">Net Book Value</th>
+                              <th className="r">Actions</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -1627,7 +1895,16 @@ function CapitalRegisterView({ capitalItems, bankTxns, bankLabels }) {
                                 <td style={{ fontSize: 12 }}>{t.description}</td>
                                 <td><BadgeComponent type={t.source === "Bank Statement" ? "blue" : "accent"}>{t.source}</BadgeComponent></td>
                                 <td className="r mono" style={{ fontWeight: 700 }}>{fmt(t.amount)}</td>
+                                <td className="r mono" style={{ color: "var(--amber)" }}>{t.totalDue > 0 ? fmt(t.totalDue) : "—"}</td>
                                 <td className="r mono" style={{ color: "var(--teal)", fontWeight: 700 }}>{fmt(t.netBookValue)}</td>
+                                <td className="r">
+                                  {t.editable && (
+                                    <RowActions
+                                      onEdit={() => openEdit((capitalItems || []).find(c => c.id === t.rawId))}
+                                      onDelete={() => remove(t.rawId)}
+                                    />
+                                  )}
+                                </td>
                               </tr>
                             ))}
                           </tbody>
@@ -1643,7 +1920,7 @@ function CapitalRegisterView({ capitalItems, bankTxns, bankLabels }) {
       </div>
 
       {open && (
-        <Modal title="Record Capital / Infrastructure Asset" onClose={() => setOpen(false)} foot={<><button className="btn btn-ghost" onClick={() => setOpen(false)}>Cancel</button><button className="btn btn-primary" onClick={save}>Save Asset</button></>}>
+        <Modal title={editingId ? "Edit Capital / Infrastructure Asset" : "Record Capital / Infrastructure Asset"} onClose={() => { setOpen(false); setEditingId(null); }} foot={<><button className="btn btn-ghost" onClick={() => { setOpen(false); setEditingId(null); }}>Cancel</button><button className="btn btn-primary" onClick={save}>{editingId ? "Save Changes" : "Save Asset"}</button></>}>
           <div className="form-row cols-2">
             <FG label="Acquisition Date"><input type="date" value={f.date} onChange={e => set("date")(e.target.value)} /></FG>
             <FG label="Asset Category">
@@ -1654,7 +1931,12 @@ function CapitalRegisterView({ capitalItems, bankTxns, bankLabels }) {
           </div>
           <div className="form-row cols-2">
             <FG label="Vendor / Group Name"><input placeholder="e.g. Mateshwari Industries / Shree Power" value={f.subCategory} onChange={e => set("subCategory")(e.target.value)} /></FG>
-            <FG label="Total Cost / Value (₹) *"><input type="number" value={f.amount} onChange={e => set("amount")(e.target.value)} /></FG>
+            <FG label="Amount Paid Now (₹) *"><input type="number" value={f.amount} onChange={e => set("amount")(e.target.value)} /></FG>
+          </div>
+          <div className="form-row">
+            <FG label="Total Invoice / Asset Value (₹)" note="Leave blank if fully paid — used to track the remaining balance owed on this asset">
+              <input type="number" placeholder="e.g. full transformer + installation contract value" value={f.totalDue} onChange={e => set("totalDue")(e.target.value)} />
+            </FG>
           </div>
           <div className="form-row cols-3">
             <FG label="Payment Method">
@@ -1791,41 +2073,13 @@ function BankStatementGroupingView({ bankBatches, setBankBatches, bankTxns, setB
         rawKeys.forEach(k => { next[k] = { ...next[k], ...patch }; });
         return next;
       });
-
-      if (patch.type && patch.type.startsWith("capital_")) {
-        let cat = "machinery";
-        if (patch.type === "capital_land") cat = "land";
-        else if (patch.type === "capital_electrical") cat = "electrical";
-        else if (patch.type === "capital_vehicles") cat = "vehicle";
-
-        const existingDescriptions = new Set((capitalItems || []).map(c => `${c.description}-${c.amount}`));
-
-        for (const t of bankTxns) {
-          if (rawKeys.includes(t.key) && t.debit > 0) {
-            const uniqueKey = `${t.description}-${t.debit}`;
-            if (existingDescriptions.has(uniqueKey)) continue;
-
-            const capitalPayload = {
-              date: t.date || t.txn_date,
-              category: cat,
-              subCategory: patch.label || t.key, // Uses the bank statement group name as sub-category
-              description: t.description,
-              amount: t.debit,
-              paidTo: patch.label || t.key,
-              fundedBy: "own",
-              paymentMode: "bank",
-              reference: "",
-              paidByPartner: ""
-            };
-
-            // Permanently save to the database storage
-            const savedItem = await db.saveCapitalItem(capitalPayload);
-            setCapitalItems(cs => [savedItem, ...cs]);
-            existingDescriptions.add(uniqueKey);
-          }
-        }
-        alert("Counterparty mapped to Capital Assets and saved permanently to the database!");
-      }
+      // Note: tagging a counterparty here as capital_* (or "owner", or any vendor
+      // type) does NOT write a row into capitalItems/expenses/partnerCashbook.
+      // Capital & Infra, Expenses, and Partners & Capital each derive their
+      // bank-tagged rows live from bankTxns + bankLabels on every render (see
+      // useCounterpartyGroups) — so the label change shows up there immediately,
+      // and a transaction is never double-counted once as a live bank row and
+      // again as a persisted manual entry with the same amount.
     } catch (err) { alert(err.message); }
   }
 
@@ -1998,41 +2252,16 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPa
   const [openActionModal, setOpenActionModal] = useState(null);
   const [selectedPartnerForStmt, setSelectedPartnerForStmt] = useState(null);
 
+  const allBankGroups = useCounterpartyGroups(bankTxns, bankLabels);
+
   const bankPartnerGroups = useMemo(() => {
-    const rawMap = {};
-    (bankTxns || []).forEach(t => {
-      if (!t) return;
-      const k = t.key || t.group_key || (t.description ? normalizeDesc(t.description) : "UNKNOWN");
-      if (!rawMap[k]) rawMap[k] = { key: k, txns: [], totalDebit: 0, totalCredit: 0 };
-      rawMap[k].txns.push(t);
-      rawMap[k].totalDebit += (+t.debit || 0);
-      rawMap[k].totalCredit += (+t.credit || 0);
-    });
-
     const merged = {};
-    Object.values(rawMap).forEach(g => {
-      const meta = (bankLabels || {})[g.key] || {};
-      const type = meta.type || "unlabeled";
-      const label = (meta.label || "").trim();
-
-      if (type === "owner" && label) {
-        const mergeKey = label.toLowerCase();
-        if (!merged[mergeKey]) {
-          merged[mergeKey] = {
-            displayName: label,
-            totalDebit: 0,
-            totalCredit: 0,
-            txns: []
-          };
-        }
-        merged[mergeKey].totalDebit += g.totalDebit;
-        merged[mergeKey].totalCredit += g.totalCredit;
-        merged[mergeKey].txns.push(...g.txns);
-      }
+    allBankGroups.forEach(g => {
+      if (g.type !== "owner") return;
+      merged[g.label.toLowerCase()] = { displayName: g.label, totalDebit: g.totalDebit, totalCredit: g.totalCredit, txns: g.txns };
     });
-
     return merged;
-  }, [bankTxns, bankLabels]);
+  }, [allBankGroups]);
 
   const partners = useMemo(() => {
     const s = new Set();
@@ -2397,7 +2626,13 @@ function BalanceSheetView({ capitalItems, bankTxns, partnerCashbook, purchases, 
   }, [partnerCashbook]);
   const totalPartnerEquity = Object.values(partnerEquity).reduce((s, a) => s + a, 0);
 
-  const totalRevenue = (weighments || []).filter(w => w.purpose === "Sale").reduce((s, w) => s + ((w.netWeight || 0) / 1000) * (+costConfig.stdSellingRate || 1800), 0);
+  const totalRevenue = (weighments || []).filter(w => w.purpose === "Sale").reduce((s, w) => {
+    const netMT = (w.netWeight || 0) / 1000;
+    // Prefer the actual rate captured on the sale slip; fall back to the
+    // configured standard rate only when a slip has none recorded.
+    const rate = +w.ratePerMT > 0 ? +w.ratePerMT : (+costConfig.stdSellingRate || 1800);
+    return s + netMT * rate;
+  }, 0);
   const totalSpend = (purchases || []).reduce((s, p) => s + (p.taxableAmount || 0), 0) + (expenses || []).reduce((s, e) => s + (e.amount || 0), 0);
   const retainedEarnings = totalRevenue - totalSpend;
   const totalFinanced = totalLiabilities + totalPartnerEquity + retainedEarnings;
@@ -2611,7 +2846,7 @@ function DashboardView({ weighments, boulderReceipts, productionEntries, expense
   const totalPartnerCapital = (partnerCashbook || []).filter(e => e.type === "Capital Infusion").reduce((s, e) => s + (e.amount || 0), 0);
 
   const stock = useMemo(() => computeStock(grades, boulderReceipts, productionEntries, weighments), [grades, boulderReceipts, productionEntries, weighments]);
-  const lowStockItems = Object.values(stock).filter(s => s.closing < 15);
+  const lowStockItems = Object.values(stock).filter(s => s.closing < (+s.reorderThresholdMT > 0 ? +s.reorderThresholdMT : 15));
 
   return (
     <div>
@@ -2620,7 +2855,7 @@ function DashboardView({ weighments, boulderReceipts, productionEntries, expense
           <div>
             <div style={{ fontSize: 13, fontWeight: 700, color: "var(--amber)", marginBottom: 2 }}>⚠️ Low Stock & Reorder Alert</div>
             <div style={{ fontSize: 12, color: "var(--text2)" }}>
-              {lowStockItems.length} grade(s) or consumable(s) are running below optimal threshold (15 MT). Check Stock Ledger.
+              {lowStockItems.length} grade(s) or consumable(s) are running below their reorder threshold. Check Stock Ledger.
             </div>
           </div>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
