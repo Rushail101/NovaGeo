@@ -2409,8 +2409,7 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPa
           </div>
           <div className="form-row cols-2">
             <FG label="Amount Paid (₹) *"><input type="number" value={cf.amount} onChange={e => setCf({ ...cf, amount: e.target.value })} /></FG>
-            <FG label="Project / Work Name"><input placeholder="e.g. Ball Mill Foundation Phase 1" value={cf.projectName} onChange={e => setCf({ ...cf, projectName: e.target.value })} /></FG>
-          </div>
+            <FG label="Expense Nature">
               <select value={cf.isCapex ? "capex" : "opex"} onChange={e => setCf({ ...cf, isCapex: e.target.value === "capex" })}>
                 <option value="opex">Operational Overhead</option>
                 <option value="capex">Fixed Asset / Land</option>
