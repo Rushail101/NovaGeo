@@ -1997,6 +1997,7 @@ function CapitalRegisterView({ bankTxns, bankLabels }) {
   const [expandedVendor, setExpandedVendor] = useState(null);
   const [search, setSearch] = useState("");
   const [selectedVendorForStmt, setSelectedVendorForStmt] = useState(null);
+  const [includeNBV, setIncludeNBV] = useState(true);
 
   const bankGroups = useCounterpartyGroups(bankTxns, bankLabels);
 
@@ -2176,22 +2177,30 @@ function CapitalRegisterView({ bankTxns, bankLabels }) {
               subtitle: `Category: ${CAP_CATS.find(c => c.id === selectedVendorForStmt.category)?.label || selectedVendorForStmt.category}`,
               summary: [
                 { label: "Total Paid", value: fmt(selectedVendorForStmt.totalCost), color: [200, 160, 40] },
-                { label: "Net Book Value", value: fmt(selectedVendorForStmt.totalNBV), color: [40, 180, 160] },
+                ...(includeNBV ? [{ label: "Net Book Value", value: fmt(selectedVendorForStmt.totalNBV), color: [40, 180, 160] }] : []),
               ],
               columns: [
                 { key: "date", label: "Date" },
                 { key: "description", label: "Description" },
                 { key: "source", label: "Source" },
                 { key: "amount", label: "Amount", align: "right" },
-                { key: "nbv", label: "Net Book Value", align: "right" },
+                ...(includeNBV ? [{ key: "nbv", label: "Net Book Value", align: "right" }] : []),
               ],
               rows: selectedVendorForStmt.txns
                 .slice().sort((a, b) => (b.date || "").localeCompare(a.date || ""))
-                .map(t => ({ date: t.date, description: t.description, source: t.source, amount: fmt(t.amount), nbv: fmt(t.netBookValue) })),
+                .map(t => ({
+                  date: t.date, description: t.description, source: t.source, amount: fmt(t.amount),
+                  ...(includeNBV ? { nbv: fmt(t.netBookValue) } : {}),
+                })),
               fileName: `${selectedVendorForStmt.vendorName}_capital_statement.pdf`,
             })}>📄 Export PDF</button>
           }
         >
+          <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14, fontSize: 12.5, color: "var(--text2)" }}>
+            <input type="checkbox" checked={includeNBV} onChange={e => setIncludeNBV(e.target.checked)} />
+            Include Net Book Value in exported PDF
+          </label>
+          {/* ...rest of modal unchanged (summary strip + table)... */}
           <div style={{ marginBottom: 16 }}>
             <div style={{ display: "flex", gap: 20, fontFamily: "var(--mono)", fontSize: 13, background: "var(--bg3)", padding: 12, borderRadius: "var(--r)" }}>
               <div>Total Paid: <span style={{ color: "var(--accent)", fontWeight: 700 }}>{fmt(selectedVendorForStmt.totalCost)}</span></div>
