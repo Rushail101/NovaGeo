@@ -2009,46 +2009,60 @@ function CapitalRegisterView({ bankTxns, bankLabels, capitalItems }) {
   //     Bank-tagged rows never get written into capitalItems (see the note
   //     in updateLabel below), so there's no overlap/double-counting here.
   const allCapitalRows = useMemo(() => {
-    const list = [];
-    bankGroups.forEach(g => {
-      if (!g.type.startsWith("capital_")) return;
-      let cat = "machinery";
-      if (g.type === "capital_land") cat = "land";
-      else if (g.type === "capital_electrical") cat = "electrical";
-      else if (g.type === "capital_vehicles") cat = "vehicle";
+  const list = [];
+  const bankCategoryByVendor = {}; // vendor name (lowercase) -> category, from bank-tagged rows
 
-      g.txns.filter(t => t.debit > 0).forEach(t => {
-        const amount = +t.debit || 0;
-        list.push({
-          id: `bank-${t.id}`,
-          category: cat,
-          vendorName: g.label.toUpperCase(),
-          date: t.date || t.txn_date,
-          description: t.description,
-          amount,
-          netBookValue: computeNetBookValue(cat, amount, t.date || t.txn_date),
-          source: "Bank Statement",
-        });
-      });
-    });
+  bankGroups.forEach(g => {
+    if (!g.type.startsWith("capital_")) return;
+    let cat = "machinery";
+    if (g.type === "capital_land") cat = "land";
+    else if (g.type === "capital_electrical") cat = "electrical";
+    else if (g.type === "capital_vehicles") cat = "vehicle";
 
-    (capitalItems || []).forEach(c => {
-      if (!c || c.bankTxnId) return; // bank-linked ones are already covered above
-      const vendorName = (c.paidTo || c.description || "General Capital Expense").trim().toUpperCase();
+    bankCategoryByVendor[g.label.trim().toLowerCase()] = cat;
+
+    g.txns.filter(t => t.debit > 0).forEach(t => {
+      const amount = +t.debit || 0;
       list.push({
-        id: `cap-${c.id}`,
-        category: c.category || "other",
-        vendorName,
-        date: c.date,
-        description: c.description,
-        amount: c.amount,
-        netBookValue: computeNetBookValue(c.category, c.amount, c.date),
-        source: c.paidByPartner ? `Cash — Paid by ${c.paidByPartner}` : "Manual Entry",
+        id: `bank-${t.id}`,
+        category: cat,
+        vendorName: g.label.toUpperCase(),
+        date: t.date || t.txn_date,
+        description: t.description,
+        amount,
+        netBookValue: computeNetBookValue(cat, amount, t.date || t.txn_date),
+        source: "Bank Statement",
       });
     });
+  });
 
-    return list.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
-  }, [bankGroups, capitalItems]);
+  // Only cash capex payments an owner made directly (Partners tab ->
+  // "Record Cash Spent by Partner" -> "Fixed Asset / Land"). These have no
+  // bankTxnId and are tagged with paidByPartner — that combination is what
+  // marks them as an owner cash spend rather than any other kind of entry.
+  (capitalItems || []).forEach(c => {
+    if (!c || c.bankTxnId || !c.paidByPartner) return;
+    const vendorName = (c.paidTo || c.description || "General Capital Expense").trim();
+    const vendorKey = vendorName.toLowerCase();
+    // If this vendor already has a block from a tagged bank counterparty,
+    // join that same block instead of opening a new one under whatever
+    // category was picked in the cash-spend modal.
+    const cat = bankCategoryByVendor[vendorKey] || c.category || "other";
+
+    list.push({
+      id: `cap-${c.id}`,
+      category: cat,
+      vendorName: vendorName.toUpperCase(),
+      date: c.date,
+      description: c.description,
+      amount: c.amount,
+      netBookValue: computeNetBookValue(cat, c.amount, c.date),
+      source: `Cash — Paid by ${c.paidByPartner}`,
+    });
+  });
+
+  return list.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+}, [bankGroups, capitalItems]);
 
   // Group vendors directly by category -> Vendor Label name
   const categoryGroups = useMemo(() => {
