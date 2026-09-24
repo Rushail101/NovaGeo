@@ -652,7 +652,7 @@ export default function App() {
             {view === "purchases" && <PurchasesView {...{ suppliers, purchases, setPurchases }} />}
             {view === "opscosts" && <MonthlyOpsCostsView {...{ expenses, setExpenses }} />}
             {view === "expenses" && <ExpensesView {...{ expenses, setExpenses, bankTxns, bankLabels, invoices, setInvoices }} />}
-            {view === "capital" && <CapitalRegisterView {...{ bankTxns, bankLabels }} />}
+            {view === "capital" && <CapitalRegisterView {...{ bankTxns, bankLabels, capitalItems }} />}
             {view === "bankstatement" && <BankStatementGroupingView {...{ bankBatches, setBankBatches, bankTxns, setBankTxns, bankLabels, setBankLabels, capitalItems, setCapitalItems, setExpenses, setPartnerCashbook }} />}
             {view === "partners" && (
               <PartnersCapitalDashboard
@@ -1993,18 +1993,21 @@ function AddInvoicePaymentModal({ invoice, onClose, onSave }) {
   );
 }
 
-function CapitalRegisterView({ bankTxns, bankLabels }) {
+function CapitalRegisterView({ bankTxns, bankLabels, capitalItems }) {
   const [expandedVendor, setExpandedVendor] = useState(null);
   const [search, setSearch] = useState("");
   const [selectedVendorForStmt, setSelectedVendorForStmt] = useState(null);
-  const [includeNBV, setIncludeNBV] = useState(true);
 
   const bankGroups = useCounterpartyGroups(bankTxns, bankLabels);
 
-  // Capital & Infra is bank-statement-only: every row here is an actual bank
-  // debit whose counterparty was tagged as a capital_* type in Bank Statement.
-  // There's no manual "add a fixed asset" path — that used to double-count
-  // against the same bank debit, so it's gone rather than fixed a third time.
+  // Capital & Infra draws from two sources:
+  //  1. Bank Statement rows tagged as a capital_* type (unchanged, below)
+  //  2. Cash paid directly by a partner/owner and marked "Fixed Asset / Land"
+  //     in the Partners tab's "Record Cash Spent by Partner" modal — those
+  //     write straight to capital_items and never touch bankTxns, so they
+  //     can't be derived from bankGroups and have to be read in separately.
+  //     Bank-tagged rows never get written into capitalItems (see the note
+  //     in updateLabel below), so there's no overlap/double-counting here.
   const allCapitalRows = useMemo(() => {
     const list = [];
     bankGroups.forEach(g => {
@@ -2028,8 +2031,24 @@ function CapitalRegisterView({ bankTxns, bankLabels }) {
         });
       });
     });
+
+    (capitalItems || []).forEach(c => {
+      if (!c || c.bankTxnId) return; // bank-linked ones are already covered above
+      const vendorName = (c.paidTo || c.description || "General Capital Expense").trim().toUpperCase();
+      list.push({
+        id: `cap-${c.id}`,
+        category: c.category || "other",
+        vendorName,
+        date: c.date,
+        description: c.description,
+        amount: c.amount,
+        netBookValue: computeNetBookValue(c.category, c.amount, c.date),
+        source: c.paidByPartner ? `Cash — Paid by ${c.paidByPartner}` : "Manual Entry",
+      });
+    });
+
     return list.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
-  }, [bankGroups]);
+  }, [bankGroups, capitalItems]);
 
   // Group vendors directly by category -> Vendor Label name
   const categoryGroups = useMemo(() => {
@@ -2149,7 +2168,7 @@ function CapitalRegisterView({ bankTxns, bankLabels }) {
                               <tr key={t.id}>
                                 <td className="mono" style={{ fontSize: 11, color: "var(--text3)" }}>{t.date}</td>
                                 <td style={{ fontSize: 12 }}>{t.description}</td>
-                                <td><BadgeComponent type="blue">{t.source}</BadgeComponent></td>
+                                <td><BadgeComponent type={t.source === "Bank Statement" ? "blue" : "accent"}>{t.source}</BadgeComponent></td>
                                 <td className="r mono" style={{ fontWeight: 700 }}>{fmt(t.amount)}</td>
                                 <td className="r mono" style={{ color: "var(--teal)", fontWeight: 700 }}>{fmt(t.netBookValue)}</td>
                               </tr>
