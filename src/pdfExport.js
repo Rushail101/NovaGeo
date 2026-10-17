@@ -83,3 +83,127 @@ export function exportStatementPDF({ title, subtitle, summary = [], columns, row
 
   doc.save(fileName || `${title.replace(/[^\w]+/g, "_")}.pdf`);
 }
+
+// ── Vendor summary report ─────────────────────────────────────────────────────
+// vendors: [{ vendor, contracted, paid, due, projects: [{ projectNo, title, hasValue,
+//   contractValue, paid, due, payments: [{ date, source, particulars, amount }] }] }]
+// All money values are plain numbers; formatting happens here.
+export function exportVendorSummaryPDF({ vendors, withTransactions = false, subtitle = "", fileName }) {
+  const money = n =>
+    "Rs. " + (+n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const doc = new jsPDF({ unit: "pt", format: "a4" });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  let y = 40;
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(14);
+  doc.text(COMPANY, 40, y);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  doc.setTextColor(120);
+  doc.text(TAGLINE, 40, y + 14);
+  doc.setTextColor(0);
+  doc.text(new Date().toLocaleDateString("en-IN"), pageWidth - 40, y, { align: "right" });
+  y += 34;
+  doc.setDrawColor(210);
+  doc.line(40, y, pageWidth - 40, y);
+  y += 24;
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(13);
+  doc.text("Vendor Summary", 40, y);
+  y += 18;
+  if (subtitle) {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.setTextColor(90);
+    doc.text(rupeeSafe(subtitle), 40, y);
+    doc.setTextColor(0);
+    y += 18;
+  }
+  y += 6;
+
+  const totals = vendors.reduce(
+    (a, v) => ({ contracted: a.contracted + v.contracted, paid: a.paid + v.paid, due: a.due + v.due }),
+    { contracted: 0, paid: 0, due: 0 }
+  );
+
+  // 1) Overview — one row per vendor.
+  autoTable(doc, {
+    startY: y,
+    head: [["Vendor", ...["Projects", "Total", "Paid", "Left"].map(h => ({ content: h, styles: { halign: "right" } }))]],
+    body: vendors.map(v => [rupeeSafe(v.vendor), String(v.projects.length), money(v.contracted), money(v.paid), money(v.due)]),
+    foot: [["TOTAL", ...[String(vendors.reduce((s, v) => s + v.projects.length, 0)), money(totals.contracted), money(totals.paid), money(totals.due)].map(c => ({ content: c, styles: { halign: "right" } }))]],
+    showFoot: "lastPage",
+    styles: { fontSize: 9, cellPadding: 6, overflow: "linebreak" },
+    headStyles: { fillColor: [25, 25, 25], textColor: 255 },
+    footStyles: { fillColor: [235, 235, 235], textColor: 20, fontStyle: "bold" },
+    alternateRowStyles: { fillColor: [247, 247, 247] },
+    columnStyles: {
+      1: { halign: "right", cellWidth: 52 },
+      2: { halign: "right", minCellWidth: 82 },
+      3: { halign: "right", minCellWidth: 82 },
+      4: { halign: "right", minCellWidth: 82 },
+    },
+    margin: { left: 40, right: 40 },
+  });
+
+  doc.setFontSize(8);
+  doc.setTextColor(120);
+  doc.text(
+    "Total = contract value of the vendor's projects. Paid = all payments linked to them. Left = balance on projects that have a contract value.",
+    40, doc.lastAutoTable.finalY + 14, { maxWidth: pageWidth - 80 }
+  );
+  doc.setTextColor(0);
+
+  // 2) Optional — every vendor with its projects and payments.
+  if (withTransactions) {
+    doc.addPage();
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(13);
+    doc.text("Transaction Details", 40, 50);
+
+    const body = [];
+    const span = (content, styles) => ({ content, colSpan: 4, styles });
+    vendors.forEach(v => {
+      body.push([span(
+        `${rupeeSafe(v.vendor)}   |   Total ${money(v.contracted)}   |   Paid ${money(v.paid)}   |   Left ${money(v.due)}`,
+        { fillColor: [25, 25, 25], textColor: 255, fontStyle: "bold" }
+      )]);
+      v.projects.forEach(p => {
+        body.push([span(
+          `${rupeeSafe(p.projectNo)} - ${rupeeSafe(p.title)}   (${p.hasValue ? `Contract ${money(p.contractValue)}` : "Open-ended"}, Paid ${money(p.paid)}${p.hasValue ? `, Left ${money(p.due)}` : ""})`,
+          { fillColor: [225, 232, 240], fontStyle: "bold" }
+        )]);
+        if (!p.payments.length) {
+          body.push([span("No payments linked yet", { textColor: 130, fontStyle: "italic" })]);
+        } else {
+          p.payments.forEach(x => body.push([rupeeSafe(x.date || ""), rupeeSafe(x.source || ""), rupeeSafe(x.particulars || ""), { content: money(x.amount), styles: { halign: "right" } }]));
+        }
+      });
+    });
+
+    autoTable(doc, {
+      startY: 62,
+      head: [["Date", "Source", "Particulars", { content: "Amount", styles: { halign: "right" } }]],
+      body,
+      styles: { fontSize: 8.5, cellPadding: 5, overflow: "linebreak" },
+      headStyles: { fillColor: [60, 60, 60], textColor: 255 },
+      columnStyles: { 0: { cellWidth: 62 }, 1: { cellWidth: 92 }, 3: { cellWidth: 86 } },
+      margin: { left: 40, right: 40 },
+    });
+  }
+
+  const pages = doc.getNumberOfPages();
+  for (let i = 1; i <= pages; i++) {
+    doc.setPage(i);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(150);
+    doc.text("Generated by Finance ERP — Nova Geo Resources", 40, pageHeight - 20);
+    doc.text(`Page ${i} of ${pages}`, pageWidth - 40, pageHeight - 20, { align: "right" });
+  }
+
+  doc.save(fileName || "vendor_summary.pdf");
+}
