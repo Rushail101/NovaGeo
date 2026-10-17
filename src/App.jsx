@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect } from "react";
 import * as XLSX from "xlsx";
 import * as db from "./db.js";
 import * as vpdb from "./vendorProjectsDb.js";
-import { exportStatementPDF } from "./pdfExport.js";
+import { exportStatementPDF, exportVendorSummaryPDF } from "./pdfExport.js";
 
 // ── Design System ─────────────────────────────────────────────────────────────
 const FONTS = `@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap');`;
@@ -388,7 +388,6 @@ const NAV = [
   { id:"vendorprojects", label:"Vendor Projects", icon:"🛠", group:"Commercial" },
   { id:"purchases", label:"Purchases", icon:"📥", group:"Commercial" },
   { id:"opscosts", label:"Monthly Overheads", icon:"🧾", group:"Commercial" },
-  { id:"expenses", label:"Expenses & Vendor Ledger", icon:"💸", group:"Commercial" },
   { id:"capital", label:"Capital & Infra", icon:"🏗", group:"Commercial" },
   { id:"bankstatement", label:"Bank Statement", icon:"🏦", group:"Banking" },
   { id:"partners", label:"Partners & Capital", icon:"🤝", group:"Banking" },
@@ -520,7 +519,6 @@ export default function App() {
   const [bankTxns, setBankTxns] = useState([]);
   const [bankLabels, setBankLabels] = useState({});
   const [partnerCashbook, setPartnerCashbook] = useState([]);
-  const [invoices, setInvoices] = useState([]);
   const [vendorProjects, setVendorProjects] = useState([]);
   const [projectPayments, setProjectPayments] = useState([]);
   const [vpStatus, setVpStatus] = useState({ ready: true, error: "" });
@@ -534,7 +532,6 @@ export default function App() {
         setCapitalProjects(d.capitalProjects || []);
         setBankBatches(d.bankBatches || []); setBankTxns(d.bankTxns || []); setBankLabels(d.bankLabels || {});
         setPartnerCashbook(d.partnerCashbook || []);
-        setInvoices(d.invoices || []);
       } catch (err) {
         console.error("Database sync failed:", err);
       }
@@ -610,12 +607,13 @@ export default function App() {
                 bankTxns={bankTxns} bankLabels={bankLabels} expenses={expenses} capitalItems={capitalItems} suppliers={suppliers}
                 projects={vendorProjects} setProjects={setVendorProjects}
                 projectPayments={projectPayments} setProjectPayments={setProjectPayments}
+                partnerCashbook={partnerCashbook} setPartnerCashbook={setPartnerCashbook}
+                setExpenses={setExpenses} setCapitalItems={setCapitalItems}
                 status={vpStatus}
               />
             )}
             {view === "purchases" && <PurchasesView {...{ suppliers, purchases, setPurchases }} />}
             {view === "opscosts" && <MonthlyOpsCostsView {...{ expenses, setExpenses }} />}
-            {view === "expenses" && <ExpensesView {...{ expenses, setExpenses, bankTxns, bankLabels, invoices, setInvoices }} />}
             {view === "capital" && <CapitalRegisterView {...{ bankTxns, bankLabels, capitalItems, capitalProjects, setCapitalProjects }} />}
             {view === "bankstatement" && <BankStatementGroupingView {...{ bankBatches, setBankBatches, bankTxns, setBankTxns, bankLabels, setBankLabels, capitalItems, setCapitalItems, setExpenses, setPartnerCashbook }} />}
             {view === "partners" && (
@@ -854,584 +852,6 @@ function MonthlyOpsCostsView({ expenses, setExpenses }) {
       </div>
       <button className="btn btn-primary" style={{ marginTop: 14 }} onClick={save}>Sync Overheads to Ledger</button>
     </div>
-  );
-}
-
-function ExpensesView({ expenses, setExpenses, bankTxns, bankLabels, invoices, setInvoices }) {
-  const [activeTab, setActiveTab] = useState("ledger");
-
-  // ── Vendor Ledger state (simple, already-settled payments — no due tracking here anymore) ──
-  const [open, setOpen] = useState(false);
-  const [editingId, setEditingId] = useState(null);
-  const [expandedGroup, setExpandedGroup] = useState(null);
-  const [search, setSearch] = useState("");
-  const [selectedVendorForStmt, setSelectedVendorForStmt] = useState(null);
-
-  const blank = { date: today(), category: "fuel", amount: "", description: "", paidTo: "", reference: "", paymentMode: "bank" };
-  const [f, setF] = useState(blank);
-  const set = k => v => setF(x => ({ ...x, [k]: v }));
-
-  function openAdd() { setEditingId(null); setF(blank); setOpen(true); }
-  function openEdit(e) {
-    setEditingId(e.id);
-    setF({
-      date: e.date || today(), category: e.category || "fuel", amount: String(e.amount ?? ""),
-      description: e.description || "", paidTo: e.paidTo || "", reference: e.reference || "",
-      paymentMode: e.paymentMode || "bank",
-    });
-    setOpen(true);
-  }
-
-  async function save() {
-    if (!f.amount || !f.description) return alert("Amount and description required.");
-    try {
-      const payload = editingId ? { ...f, id: editingId } : f;
-      const row = await db.saveExpense(payload);
-      if (editingId) setExpenses(es => es.map(e => e.id === editingId ? row : e));
-      else setExpenses(es => [row, ...es]);
-      setOpen(false); setF(blank); setEditingId(null);
-    } catch (err) { alert(err.message); }
-  }
-
-  async function remove(id) {
-    if (!confirm("Delete this expense entry? This cannot be undone.")) return;
-    if (typeof db.deleteExpense !== "function") return alert("db.deleteExpense isn't implemented yet — add it to db.js to enable deleting manual entries.");
-    try {
-      await db.deleteExpense(id);
-      setExpenses(es => es.filter(e => e.id !== id));
-    } catch (err) { alert(err.message); }
-  }
-
-  // A bank debit that's been linked in as an invoice payment is accounted for
-  // over on the Invoices tab — exclude it here so it isn't counted twice.
-  const linkedBankTxnIds = useMemo(
-    () => new Set((invoices || []).flatMap(inv => (inv.payments || []).map(p => p.bankTxnId).filter(Boolean))),
-    [invoices]
-  );
-
-  const bankGroups = useCounterpartyGroups(bankTxns, bankLabels);
-
-  const expenseGroups = useMemo(() => {
-    const map = {};
-
-    bankGroups.forEach(g => {
-      // Owner/capital counterparties are tracked on the Partners and Capital & Infra
-      // screens respectively, not here.
-      if (g.type === "owner" || g.type.startsWith("capital_")) return;
-      const unlinkedTxns = g.txns.filter(t => t.debit > 0 && !linkedBankTxnIds.has(t.id));
-      if (!unlinkedTxns.length) return;
-      const groupKey = g.label.toLowerCase();
-      if (!map[groupKey]) {
-        map[groupKey] = { groupKey, vendorName: g.label, type: g.type, totalPaid: 0, txns: [] };
-      }
-      unlinkedTxns.forEach(t => {
-        map[groupKey].totalPaid += (+t.debit || 0);
-        map[groupKey].txns.push({ id: `bank-${t.id}`, date: t.date || t.txn_date, description: t.description, amount: +t.debit, source: "Bank Statement" });
-      });
-    });
-
-    (expenses || []).forEach(e => {
-      if (!e) return;
-      const vendorName = e.paidTo || e.description || "General Expense";
-      const groupKey = vendorName.toLowerCase();
-      const amt = +e.amount || 0;
-
-      if (!map[groupKey]) {
-        map[groupKey] = { groupKey, vendorName, type: e.category || "vendor", totalPaid: 0, txns: [] };
-      }
-      map[groupKey].totalPaid += amt;
-      map[groupKey].txns.push({
-        id: `manual-${e.id}`,
-        date: e.date,
-        description: e.description,
-        amount: amt,
-        source: e.paidByPartner ? `Cash — Paid by ${e.paidByPartner}` : "Manual Entry",
-        editable: true,
-        rawId: e.id,
-      });
-    });
-
-    return Object.values(map).sort((a, b) => b.totalPaid - a.totalPaid);
-  }, [bankGroups, expenses, linkedBankTxnIds]);
-
-  const filteredGroups = expenseGroups.filter(g => {
-    if (!search) return true;
-    return g.vendorName.toLowerCase().includes(search.toLowerCase()) || g.txns.some(t => t.description.toLowerCase().includes(search.toLowerCase()));
-  });
-
-  const totalPaidAll = expenseGroups.reduce((s, g) => s + g.totalPaid, 0);
-
-  // ── Invoices & Dues state ──────────────────────────────────────────────────
-  const [invoiceOpen, setInvoiceOpen] = useState(false);
-  const [editingInvoiceId, setEditingInvoiceId] = useState(null);
-  const [invoiceSearch, setInvoiceSearch] = useState("");
-  const [expandedInvoice, setExpandedInvoice] = useState(null);
-  const [selectedInvoiceForStmt, setSelectedInvoiceForStmt] = useState(null);
-  const [paymentModalFor, setPaymentModalFor] = useState(null);
-  const [linkTxnModalFor, setLinkTxnModalFor] = useState(null);
-  const [linkTxnSearch, setLinkTxnSearch] = useState("");
-
-  const invBlank = { date: today(), category: "fuel", vendorName: "", description: "", totalAmount: "", reference: "" };
-  const [invF, setInvF] = useState(invBlank);
-  const setInv = k => v => setInvF(x => ({ ...x, [k]: v }));
-
-  function openInvoiceAdd() { setEditingInvoiceId(null); setInvF(invBlank); setInvoiceOpen(true); }
-  function openInvoiceEdit(inv) {
-    setEditingInvoiceId(inv.id);
-    setInvF({
-      date: inv.date || today(), category: inv.category || "fuel", vendorName: inv.vendorName || "",
-      description: inv.description || "", totalAmount: String(inv.totalAmount ?? ""), reference: inv.reference || "",
-    });
-    setInvoiceOpen(true);
-  }
-
-  async function saveInvoice() {
-    if (!invF.vendorName || !invF.totalAmount) return alert("Vendor name and total amount required.");
-    try {
-      const payload = editingInvoiceId ? { ...invF, id: editingInvoiceId } : invF;
-      const row = await db.saveInvoice(payload);
-      if (editingInvoiceId) {
-        setInvoices(is => is.map(i => i.id === editingInvoiceId ? { ...i, ...row, payments: i.payments, paid: i.paid, due: Math.max(0, row.totalAmount - i.paid) } : i));
-      } else {
-        setInvoices(is => [{ ...row, payments: [], paid: 0, due: row.totalAmount }, ...is]);
-      }
-      setInvoiceOpen(false); setInvF(invBlank); setEditingInvoiceId(null);
-    } catch (err) { alert(err.message); }
-  }
-
-  async function removeInvoice(id) {
-    if (!confirm("Delete this invoice and all its linked payments? This cannot be undone.")) return;
-    try {
-      await db.deleteInvoice(id);
-      setInvoices(is => is.filter(i => i.id !== id));
-    } catch (err) { alert(err.message); }
-  }
-
-  function recomputeInvoice(inv) {
-    const paid = (inv.payments || []).reduce((s, p) => s + p.amount, 0);
-    return { ...inv, paid, due: Math.max(0, inv.totalAmount - paid) };
-  }
-
-  async function addPayment(invoice, data) {
-    if (!data.amount) return alert("Amount is required.");
-    try {
-      const p = await db.addInvoicePayment(invoice.id, data);
-      setInvoices(is => is.map(i => i.id === invoice.id ? recomputeInvoice({ ...i, payments: [p, ...(i.payments || [])] }) : i));
-      setPaymentModalFor(null);
-    } catch (err) { alert(err.message); }
-  }
-
-  async function removePayment(invoice, paymentId) {
-    if (!confirm("Remove this payment from the invoice?")) return;
-    try {
-      await db.deleteInvoicePayment(paymentId);
-      setInvoices(is => is.map(i => i.id === invoice.id ? recomputeInvoice({ ...i, payments: (i.payments || []).filter(p => p.id !== paymentId) }) : i));
-    } catch (err) { alert(err.message); }
-  }
-
-  async function linkBankTxn(invoice, txn) {
-    await addPayment(invoice, { date: txn.date, amount: txn.debit, paymentMode: "bank", bankTxnId: txn.id, remarks: txn.description });
-    setLinkTxnModalFor(null); setLinkTxnSearch("");
-  }
-
-  const unlinkedBankDebits = useMemo(
-    () => (bankTxns || []).filter(t => t.debit > 0 && !linkedBankTxnIds.has(t.id)),
-    [bankTxns, linkedBankTxnIds]
-  );
-
-  const filteredUnlinkedTxns = unlinkedBankDebits.filter(t => {
-    if (!linkTxnSearch) return true;
-    return (t.description || "").toLowerCase().includes(linkTxnSearch.toLowerCase());
-  });
-
-  const filteredInvoices = (invoices || []).filter(inv => {
-    if (!invoiceSearch) return true;
-    const s = invoiceSearch.toLowerCase();
-    return inv.vendorName.toLowerCase().includes(s) || (inv.description || "").toLowerCase().includes(s) || (inv.invoiceNo || "").toLowerCase().includes(s);
-  }).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
-
-  const totalInvoicedAll = (invoices || []).reduce((s, i) => s + i.totalAmount, 0);
-  const totalInvPaidAll = (invoices || []).reduce((s, i) => s + i.paid, 0);
-  const totalInvDueAll = (invoices || []).reduce((s, i) => s + i.due, 0);
-  const openInvoicesCount = (invoices || []).filter(i => i.due > 0).length;
-
-  return (
-    <div>
-      <div className="pill-tabs">
-        <button className={`pill-tab ${activeTab === "ledger" ? "active" : ""}`} onClick={() => setActiveTab("ledger")}>Vendor Ledger</button>
-        <button className={`pill-tab ${activeTab === "invoices" ? "active" : ""}`} onClick={() => setActiveTab("invoices")}>Invoices & Dues {openInvoicesCount > 0 && `(${openInvoicesCount} open)`}</button>
-      </div>
-
-      {activeTab === "ledger" ? (
-        <div>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
-            <div>
-              <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>Vendor Expenses</h3>
-              <p style={{ fontSize: 12, color: "var(--text3)" }}>Already-settled disbursements. For a bill with a balance still owed, use Invoices & Dues instead.</p>
-            </div>
-            <button className="btn btn-primary" onClick={openAdd}>+ Add Expense</button>
-          </div>
-
-          <div className="stats-grid">
-            <StatCard label="Total Paid Out" value={fmt(totalPaidAll)} color="red" sub="Cleared disbursements" />
-            <StatCard label="Active Vendors" value={expenseGroups.length} color="purple" sub="Counterparty groups" />
-            <StatCard label="Transactions" value={expenseGroups.reduce((s, g) => s + g.txns.length, 0)} color="blue" sub="Total line items" />
-          </div>
-
-          <div className="filter-bar">
-            <SearchBar value={search} onChange={setSearch} placeholder="Search vendor or description…" />
-            <button className="btn btn-ghost btn-sm" onClick={() => exportRowsToExcel("expenses", filteredGroups.flatMap(g => g.txns.map(t => ({ Vendor: g.vendorName, Category: g.type, Date: t.date, Description: t.description, Source: t.source, Amount: t.amount }))))}>⬇ Export Excel</button>
-          </div>
-
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {filteredGroups.length === 0 ? (
-              <div className="config-card" style={{ textAlign: "center", padding: 32 }}>
-                <EmptyState icon="💸" message="No vendor expenses or payments found" sub="Import a bank statement or record an expense." />
-              </div>
-            ) : (
-              filteredGroups.map(g => (
-                <div key={g.groupKey} className="config-card" style={{ padding: 14 }}>
-                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end", justifyContent: "space-between" }}>
-                    <div>
-                      <div style={{ fontSize: 11, color: "var(--text3)", fontFamily: "var(--mono)", textTransform: "uppercase" }}>Vendor / Counterparty</div>
-                      <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text)", marginTop: 2 }}>{g.vendorName}</div>
-                    </div>
-                    <div style={{ display: "flex", gap: 18, fontFamily: "var(--mono)", fontSize: 12.5 }}>
-                      <div><div style={{ color: "var(--text3)", fontSize: 10 }}>PAID</div><div style={{ color: "var(--red)", fontWeight: 700 }}>{fmt(g.totalPaid)}</div></div>
-                      <div><div style={{ color: "var(--text3)", fontSize: 10 }}>TXNS</div><div style={{ fontWeight: 700 }}>{g.txns.length}</div></div>
-                    </div>
-                  </div>
-
-                  <div style={{ marginTop: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <span style={{ fontSize: 11, color: "var(--text3)", fontFamily: "var(--mono)" }}>Category: {g.type}</span>
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <button className="btn btn-info btn-sm" onClick={() => setSelectedVendorForStmt(g)}>📄 Party Statement</button>
-                      <button className="btn btn-ghost btn-sm" onClick={() => setExpandedGroup(x => x === g.groupKey ? null : g.groupKey)}>
-                        {expandedGroup === g.groupKey ? "Hide" : "View"} transactions ({g.txns.length})
-                      </button>
-                    </div>
-                  </div>
-
-                  {expandedGroup === g.groupKey && (
-                    <div className="table-wrap" style={{ marginTop: 10 }}>
-                      <table>
-                        <thead>
-                          <tr>
-                            <th>Date</th>
-                            <th>Narration / Description</th>
-                            <th>Source</th>
-                            <th className="r">Amount</th>
-                            <th className="r">Actions</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {g.txns.sort((a, b) => (b.date || "").localeCompare(a.date || "")).map(t => (
-                            <tr key={t.id}>
-                              <td className="mono" style={{ fontSize: 11, color: "var(--text3)" }}>{t.date}</td>
-                              <td style={{ fontSize: 12 }}>{t.description}</td>
-                              <td><BadgeComponent type={t.source === "Bank Statement" ? "blue" : "accent"}>{t.source}</BadgeComponent></td>
-                              <td className="r mono" style={{ fontSize: 11, color: "var(--red)", fontWeight: 700 }}>{fmt(t.amount)}</td>
-                              <td className="r">
-                                {t.editable && (
-                                  <RowActions
-                                    onEdit={() => openEdit((expenses || []).find(e => e.id === t.rawId))}
-                                    onDelete={() => remove(t.rawId)}
-                                  />
-                                )}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
-              ))
-            )}
-          </div>
-
-          {selectedVendorForStmt && (
-            <Modal
-              title={`Statement of Account: ${selectedVendorForStmt.vendorName}`}
-              size="modal-lg"
-              onClose={() => setSelectedVendorForStmt(null)}
-              foot={
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button className="btn btn-ghost" onClick={() => exportStatementPDF({
-                    title: `Statement of Account: ${selectedVendorForStmt.vendorName}`,
-                    subtitle: `Category: ${selectedVendorForStmt.type}`,
-                    summary: [{ label: "Total Disbursed", value: fmt(selectedVendorForStmt.totalPaid), color: [220, 70, 70] }],
-                    columns: [
-                      { key: "date", label: "Date" }, { key: "description", label: "Description" },
-                      { key: "source", label: "Source" }, { key: "amount", label: "Amount", align: "right" },
-                    ],
-                    rows: selectedVendorForStmt.txns.slice().sort((a, b) => (b.date || "").localeCompare(a.date || "")).map(t => ({ ...t, amount: fmt(t.amount) })),
-                    fileName: `${selectedVendorForStmt.vendorName}_statement.pdf`,
-                  })}>📄 Export PDF</button>
-                  <button className="btn btn-primary" onClick={() => alert("Statement link ready to share via WhatsApp!")}>💬 Share via WhatsApp</button>
-                </div>
-              }
-            >
-              <div style={{ marginBottom: 16 }}>
-                <div style={{ display: "flex", gap: 20, fontFamily: "var(--mono)", fontSize: 13, background: "var(--bg3)", padding: 12, borderRadius: "var(--r)" }}>
-                  <div>Total Disbursed: <span style={{ color: "var(--red)", fontWeight: 700 }}>{fmt(selectedVendorForStmt.totalPaid)}</span></div>
-                </div>
-              </div>
-              <div className="table-wrap">
-                <table>
-                  <thead><tr><th>Date</th><th>Description</th><th>Source</th><th className="r">Amount</th></tr></thead>
-                  <tbody>
-                    {selectedVendorForStmt.txns.map(t => (
-                      <tr key={t.id}>
-                        <td className="mono">{t.date}</td>
-                        <td>{t.description}</td>
-                        <td><BadgeComponent type="muted">{t.source}</BadgeComponent></td>
-                        <td className="r mono" style={{ fontWeight: 700 }}>{fmt(t.amount)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </Modal>
-          )}
-
-          {open && (
-            <Modal title={editingId ? "Edit Expense" : "Record Expense"} onClose={() => { setOpen(false); setEditingId(null); }} foot={<><button className="btn btn-ghost" onClick={() => { setOpen(false); setEditingId(null); }}>Cancel</button><button className="btn btn-primary" onClick={save}>{editingId ? "Save Changes" : "Save Entry"}</button></>}>
-              <div className="form-row cols-2">
-                <FG label="Date"><input type="date" value={f.date} onChange={e => set("date")(e.target.value)} /></FG>
-                <FG label="Category">
-                  <select value={f.category} onChange={e => set("category")(e.target.value)}>
-                    {EXP_CATS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
-                  </select>
-                </FG>
-              </div>
-              <div className="form-row"><FG label="Amount (₹) *"><input type="number" value={f.amount} onChange={e => set("amount")(e.target.value)} /></FG></div>
-              <div className="form-row"><FG label="Paid To / Vendor Name *"><input placeholder="e.g. Mateshwari Industries" value={f.paidTo} onChange={e => set("paidTo")(e.target.value)} /></FG></div>
-              <div className="form-row"><FG label="Description / Bill Particulars *"><input value={f.description} onChange={e => set("description")(e.target.value)} /></FG></div>
-              <div className="form-row cols-2">
-                <FG label="Channel">
-                  <select value={f.paymentMode} onChange={e => set("paymentMode")(e.target.value)}>
-                    <option value="bank">Bank / UPI</option>
-                    <option value="cash">Site Petty Cash</option>
-                  </select>
-                </FG>
-                <FG label="Voucher Ref"><input value={f.reference} onChange={e => set("reference")(e.target.value)} /></FG>
-              </div>
-            </Modal>
-          )}
-        </div>
-      ) : (
-        <div>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
-            <div>
-              <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>Invoices & Dues</h3>
-              <p style={{ fontSize: 12, color: "var(--text3)" }}>Create an invoice once, then settle it with one or more payments over time — paid/due always reflect the linked payments.</p>
-            </div>
-            <button className="btn btn-primary" onClick={openInvoiceAdd}>+ New Invoice</button>
-          </div>
-
-          <div className="stats-grid">
-            <StatCard label="Total Invoiced" value={fmt(totalInvoicedAll)} color="blue" sub="All invoices" />
-            <StatCard label="Total Paid" value={fmt(totalInvPaidAll)} color="green" sub="Linked payments" />
-            <StatCard label="Total Due" value={fmt(totalInvDueAll)} color="amber" sub="Outstanding balance" />
-            <StatCard label="Open Invoices" value={openInvoicesCount} color="purple" sub={`of ${(invoices || []).length} total`} />
-          </div>
-
-          <div className="filter-bar">
-            <SearchBar value={invoiceSearch} onChange={setInvoiceSearch} placeholder="Search vendor, description, or invoice #…" />
-            <button className="btn btn-ghost btn-sm" onClick={() => exportRowsToExcel("invoices", filteredInvoices.map(i => ({ Invoice: i.invoiceNo, Date: i.date, Vendor: i.vendorName, Category: i.category, Description: i.description, TotalAmount: i.totalAmount, Paid: i.paid, Due: i.due })))}>⬇ Export Excel</button>
-          </div>
-
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {filteredInvoices.length === 0 ? (
-              <div className="config-card" style={{ textAlign: "center", padding: 32 }}>
-                <EmptyState icon="🧾" message="No invoices yet" sub="Create one to start tracking a bill that'll be paid off over time." />
-              </div>
-            ) : (
-              filteredInvoices.map(inv => (
-                <div key={inv.id} className="config-card" style={{ padding: 14 }}>
-                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end", justifyContent: "space-between" }}>
-                    <div>
-                      <div style={{ fontSize: 11, color: "var(--text3)", fontFamily: "var(--mono)", textTransform: "uppercase" }}>{inv.invoiceNo} · {inv.date}</div>
-                      <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text)", marginTop: 2 }}>{inv.vendorName}</div>
-                      <div style={{ fontSize: 12, color: "var(--text2)", marginTop: 2 }}>{inv.description}</div>
-                    </div>
-                    <div style={{ display: "flex", gap: 18, fontFamily: "var(--mono)", fontSize: 12.5, alignItems: "center" }}>
-                      <div><div style={{ color: "var(--text3)", fontSize: 10 }}>TOTAL</div><div style={{ fontWeight: 700 }}>{fmt(inv.totalAmount)}</div></div>
-                      <div><div style={{ color: "var(--text3)", fontSize: 10 }}>PAID</div><div style={{ color: "var(--green)", fontWeight: 700 }}>{fmt(inv.paid)}</div></div>
-                      {inv.due > 0 ? <span className="due-badge">DUE {fmt(inv.due)}</span> : <BadgeComponent type="green">Fully Paid</BadgeComponent>}
-                    </div>
-                  </div>
-
-                  <div style={{ marginTop: 10, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-                    <span style={{ fontSize: 11, color: "var(--text3)", fontFamily: "var(--mono)" }}>Category: {inv.category}</span>
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                      {inv.due > 0 && <button className="btn btn-primary btn-sm" onClick={() => setPaymentModalFor(inv)}>+ Add Payment</button>}
-                      {inv.due > 0 && <button className="btn btn-ghost btn-sm" onClick={() => setLinkTxnModalFor(inv)}>🔗 Link Bank Txn</button>}
-                      <button className="btn btn-info btn-sm" onClick={() => setSelectedInvoiceForStmt(inv)}>📄 Statement</button>
-                      <button className="btn btn-ghost btn-sm" onClick={() => openInvoiceEdit(inv)}>Edit</button>
-                      <button className="btn btn-danger btn-sm" onClick={() => removeInvoice(inv.id)}>Delete</button>
-                      <button className="btn btn-ghost btn-sm" onClick={() => setExpandedInvoice(x => x === inv.id ? null : inv.id)}>
-                        {expandedInvoice === inv.id ? "Hide" : "Show"} payments ({(inv.payments || []).length})
-                      </button>
-                    </div>
-                  </div>
-
-                  {expandedInvoice === inv.id && (
-                    <div className="table-wrap" style={{ marginTop: 10 }}>
-                      <table>
-                        <thead><tr><th>Date</th><th>Mode</th><th>Reference / Remarks</th><th className="r">Amount</th><th className="r">Actions</th></tr></thead>
-                        <tbody>
-                          {(inv.payments || []).length === 0 ? (
-                            <tr><td colSpan={5} style={{ textAlign: "center", color: "var(--text3)", padding: 16 }}>No payments linked yet</td></tr>
-                          ) : (
-                            inv.payments.map(p => (
-                              <tr key={p.id}>
-                                <td className="mono" style={{ fontSize: 11, color: "var(--text3)" }}>{p.date}</td>
-                                <td><BadgeComponent type={p.bankTxnId ? "blue" : "accent"}>{p.bankTxnId ? "Bank Txn" : p.paymentMode}</BadgeComponent></td>
-                                <td style={{ fontSize: 12 }}>{p.reference || p.remarks || "—"}</td>
-                                <td className="r mono" style={{ fontWeight: 700, color: "var(--green)" }}>{fmt(p.amount)}</td>
-                                <td className="r"><RowActions onDelete={() => removePayment(inv, p.id)} /></td>
-                              </tr>
-                            ))
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
-              ))
-            )}
-          </div>
-
-          {invoiceOpen && (
-            <Modal title={editingInvoiceId ? "Edit Invoice" : "New Invoice"} onClose={() => { setInvoiceOpen(false); setEditingInvoiceId(null); }} foot={<><button className="btn btn-ghost" onClick={() => { setInvoiceOpen(false); setEditingInvoiceId(null); }}>Cancel</button><button className="btn btn-primary" onClick={saveInvoice}>{editingInvoiceId ? "Save Changes" : "Create Invoice"}</button></>}>
-              <div className="form-row cols-2">
-                <FG label="Invoice Date"><input type="date" value={invF.date} onChange={e => setInv("date")(e.target.value)} /></FG>
-                <FG label="Category">
-                  <select value={invF.category} onChange={e => setInv("category")(e.target.value)}>
-                    {EXP_CATS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
-                  </select>
-                </FG>
-              </div>
-              <div className="form-row"><FG label="Vendor Name *"><input placeholder="e.g. Mateshwari Industries" value={invF.vendorName} onChange={e => setInv("vendorName")(e.target.value)} /></FG></div>
-              <div className="form-row"><FG label="Description / Bill Particulars"><input value={invF.description} onChange={e => setInv("description")(e.target.value)} /></FG></div>
-              <div className="form-row cols-2">
-                <FG label="Total Invoice Amount (₹) *"><input type="number" value={invF.totalAmount} onChange={e => setInv("totalAmount")(e.target.value)} /></FG>
-                <FG label="Invoice / Voucher Ref"><input value={invF.reference} onChange={e => setInv("reference")(e.target.value)} /></FG>
-              </div>
-            </Modal>
-          )}
-
-          {paymentModalFor && (
-            <AddInvoicePaymentModal invoice={paymentModalFor} onClose={() => setPaymentModalFor(null)} onSave={data => addPayment(paymentModalFor, data)} />
-          )}
-
-          {linkTxnModalFor && (
-            <Modal title={`Link Bank Transaction: ${linkTxnModalFor.vendorName}`} size="modal-lg" onClose={() => { setLinkTxnModalFor(null); setLinkTxnSearch(""); }}>
-              <div style={{ marginBottom: 12 }}>
-                <SearchBar value={linkTxnSearch} onChange={setLinkTxnSearch} placeholder="Search narration…" style={{ minWidth: "100%" }} />
-              </div>
-              <p style={{ fontSize: 11, color: "var(--text3)", marginBottom: 10 }}>Showing bank debits not already linked to any invoice. Click one to attach it as a payment ({fmt(linkTxnModalFor.due)} still due).</p>
-              <div className="table-wrap">
-                <table>
-                  <thead><tr><th>Date</th><th>Narration</th><th className="r">Amount</th><th className="r">Action</th></tr></thead>
-                  <tbody>
-                    {filteredUnlinkedTxns.length === 0 ? (
-                      <tr><td colSpan={4} style={{ textAlign: "center", color: "var(--text3)", padding: 16 }}>No unlinked bank debits found</td></tr>
-                    ) : (
-                      filteredUnlinkedTxns.slice(0, 100).map(t => (
-                        <tr key={t.id}>
-                          <td className="mono" style={{ fontSize: 11, color: "var(--text3)" }}>{t.date}</td>
-                          <td style={{ fontSize: 12 }}>{t.description}</td>
-                          <td className="r mono" style={{ fontWeight: 700 }}>{fmt(t.debit)}</td>
-                          <td className="r"><button className="btn btn-primary btn-sm" onClick={() => linkBankTxn(linkTxnModalFor, t)}>Link</button></td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </Modal>
-          )}
-
-          {selectedInvoiceForStmt && (
-            <Modal
-              title={`Invoice Statement: ${selectedInvoiceForStmt.invoiceNo} — ${selectedInvoiceForStmt.vendorName}`}
-              size="modal-lg"
-              onClose={() => setSelectedInvoiceForStmt(null)}
-              foot={
-                <button className="btn btn-ghost" onClick={() => exportStatementPDF({
-                  title: `Invoice Statement: ${selectedInvoiceForStmt.invoiceNo}`,
-                  subtitle: `${selectedInvoiceForStmt.vendorName} — ${selectedInvoiceForStmt.description || ""}`,
-                  summary: [
-                    { label: "Total Invoice", value: fmt(selectedInvoiceForStmt.totalAmount), color: [90, 160, 220] },
-                    { label: "Paid", value: fmt(selectedInvoiceForStmt.paid), color: [70, 180, 100] },
-                    { label: "Due", value: fmt(selectedInvoiceForStmt.due), color: [220, 150, 30] },
-                  ],
-                  columns: [
-                    { key: "date", label: "Date" }, { key: "mode", label: "Mode" },
-                    { key: "reference", label: "Reference" }, { key: "amount", label: "Amount", align: "right" },
-                  ],
-                  rows: (selectedInvoiceForStmt.payments || []).map(p => ({
-                    date: p.date, mode: p.bankTxnId ? "Bank Txn" : p.paymentMode,
-                    reference: p.reference || p.remarks || "—", amount: fmt(p.amount),
-                  })),
-                  fileName: `${selectedInvoiceForStmt.invoiceNo}_statement.pdf`,
-                })}>📄 Export PDF</button>
-              }
-            >
-              <div style={{ marginBottom: 16 }}>
-                <div style={{ display: "flex", gap: 20, fontFamily: "var(--mono)", fontSize: 13, background: "var(--bg3)", padding: 12, borderRadius: "var(--r)", flexWrap: "wrap" }}>
-                  <div>Total Invoice: <span style={{ fontWeight: 700 }}>{fmt(selectedInvoiceForStmt.totalAmount)}</span></div>
-                  <div>Paid: <span style={{ color: "var(--green)", fontWeight: 700 }}>{fmt(selectedInvoiceForStmt.paid)}</span></div>
-                  <div>Due: <span style={{ color: "var(--amber)", fontWeight: 700 }}>{fmt(selectedInvoiceForStmt.due)}</span></div>
-                </div>
-              </div>
-              <div className="table-wrap">
-                <table>
-                  <thead><tr><th>Date</th><th>Mode</th><th>Reference</th><th className="r">Amount</th></tr></thead>
-                  <tbody>
-                    {(selectedInvoiceForStmt.payments || []).map(p => (
-                      <tr key={p.id}>
-                        <td className="mono">{p.date}</td>
-                        <td><BadgeComponent type={p.bankTxnId ? "blue" : "accent"}>{p.bankTxnId ? "Bank Txn" : p.paymentMode}</BadgeComponent></td>
-                        <td>{p.reference || p.remarks || "—"}</td>
-                        <td className="r mono" style={{ fontWeight: 700 }}>{fmt(p.amount)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </Modal>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function AddInvoicePaymentModal({ invoice, onClose, onSave }) {
-  const [pf, setPf] = useState({ date: today(), amount: "", paymentMode: "bank", reference: "", remarks: "" });
-  const setP = k => v => setPf(x => ({ ...x, [k]: v }));
-  return (
-    <Modal title={`Add Payment: ${invoice.vendorName}`} onClose={onClose} foot={<><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-primary" onClick={() => onSave(pf)}>Save Payment</button></>}>
-      <p style={{ fontSize: 11, color: "var(--text3)", marginBottom: 10 }}>{fmt(invoice.due)} still due on {invoice.invoiceNo}.</p>
-      <div className="form-row cols-2">
-        <FG label="Date"><input type="date" value={pf.date} onChange={e => setP("date")(e.target.value)} /></FG>
-        <FG label="Amount (₹) *"><input type="number" value={pf.amount} onChange={e => setP("amount")(e.target.value)} /></FG>
-      </div>
-      <div className="form-row cols-2">
-        <FG label="Mode">
-          <select value={pf.paymentMode} onChange={e => setP("paymentMode")(e.target.value)}>
-            <option value="bank">Bank / UPI</option>
-            <option value="cash">Cash</option>
-          </select>
-        </FG>
-        <FG label="Reference"><input value={pf.reference} onChange={e => setP("reference")(e.target.value)} /></FG>
-      </div>
-      <div className="form-row"><FG label="Remarks"><input value={pf.remarks} onChange={e => setP("remarks")(e.target.value)} /></FG></div>
-    </Modal>
   );
 }
 
@@ -2960,7 +2380,7 @@ function paymentSourceKey(p) {
   return null;
 }
 
-function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, suppliers, projects, setProjects, projectPayments, setProjectPayments, status }) {
+function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, suppliers, projects, setProjects, projectPayments, setProjectPayments, partnerCashbook, setPartnerCashbook, setExpenses, setCapitalItems, status }) {
   const [tab, setTab] = useState("projects");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("open"); // open | all | <status id>
@@ -2973,6 +2393,10 @@ function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, supp
   const [assignItem, setAssignItem] = useState(null);
   const [unSearch, setUnSearch] = useState("");
   const [unShowAll, setUnShowAll] = useState(false);
+  const [summaryOpen, setSummaryOpen] = useState(false);
+  const [summaryWithTx, setSummaryWithTx] = useState(false);
+  const [cashFor, setCashFor] = useState(null);       // project to record a partner cash payment against
+  const [vendorEditItem, setVendorEditItem] = useState(null); // cash payment whose vendor is being corrected
 
   const blank = { vendorName: "", title: "", category: "misc", status: "active", contractValue: "", startDate: "", endDate: "", description: "", notes: "" };
   const [f, setF] = useState(blank);
@@ -3054,6 +2478,56 @@ function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, supp
     } catch (err) { alert(err.message); }
   }
 
+  // Partners = anyone tagged as an owner on the bank statement + anyone with a cashbook entry.
+  const bankGroupsForPartners = useCounterpartyGroups(bankTxns, bankLabels);
+  const partners = useMemo(() => {
+    const m = {};
+    bankGroupsForPartners.forEach(g => { if (g.type === "owner") m[normVendor(g.label)] = g.label; });
+    (partnerCashbook || []).forEach(e => { const n = (e?.partnerName || "").trim(); if (n && !m[normVendor(n)]) m[normVendor(n)] = n; });
+    return Object.values(m).sort((a, b) => a.localeCompare(b));
+  }, [bankGroupsForPartners, partnerCashbook]);
+
+  // Partner paid a vendor in cash: books the expense (or capex), credits the partner's
+  // current account, and links the whole amount to this project in one go.
+  async function savePartnerCash(project, d) {
+    if (!d.partnerName) return alert("Pick the partner who paid.");
+    if (!(+d.amount > 0)) return alert("Enter an amount greater than zero.");
+    if (!d.description.trim()) return alert("Add a short description.");
+    const isCapex = CAP_CATS.some(c => c.id === project.category);
+    try {
+      const res = await db.recordPartnerDirectCashExpense(
+        d.partnerName, d.date, project.category, d.amount, d.description.trim(), d.ref, isCapex, project.vendorName
+      );
+      setPartnerCashbook(prev => [res.cashbookEntry, ...(prev || [])]);
+      if (isCapex) setCapitalItems(prev => [res.item, ...(prev || [])]);
+      else setExpenses(prev => [res.item, ...(prev || [])]);
+      const row = await vpdb.addProjectPayment({
+        projectId: project.id,
+        expenseId: isCapex ? null : res.item.id,
+        capitalItemId: isCapex ? res.item.id : null,
+        amount: +d.amount, date: d.date, paymentMode: "cash", remarks: d.description.trim(),
+      });
+      setProjectPayments(pp => [row, ...pp]);
+      setCashFor(null);
+    } catch (err) { alert(err.message); }
+  }
+
+  // Fix the vendor on an existing partner-cash entry so it lines up with the project's vendor.
+  async function saveItemVendor(item, vendorName) {
+    const name = (vendorName || "").trim();
+    if (!name) return alert("Enter the vendor name.");
+    try {
+      if (item.sourceType === "expense") {
+        await db.setPaidTo("expenses", item.sourceId, name);
+        setExpenses(es => es.map(e => e.id === item.sourceId ? { ...e, paidTo: name } : e));
+      } else if (item.sourceType === "capital") {
+        await db.setPaidTo("capital_items", item.sourceId, name);
+        setCapitalItems(cs => cs.map(c => c.id === item.sourceId ? { ...c, paidTo: name } : c));
+      }
+      setVendorEditItem(null);
+    } catch (err) { alert(err.message); }
+  }
+
   const filtered = summarized.filter(p => {
     if (statusFilter === "open" && (p.status === "completed" || p.status === "cancelled")) return false;
     if (statusFilter !== "open" && statusFilter !== "all" && p.status !== statusFilter) return false;
@@ -3103,6 +2577,26 @@ function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, supp
     if (paymentSourceKey(p) == null) return { kind: "Manual", badge: "purple", text: p.reference || p.remarks || "—" };
     return { kind: src ? src.sourceLabel : "Linked", badge: src?.sourceType === "bank" ? "blue" : "accent", text: src?.description || p.remarks || "—" };
   };
+
+  function exportVendorSummary(withTransactions) {
+    const vendors = vendorGroups.map(g => ({
+      vendor: g.vendor, contracted: g.contracted, paid: g.paid, due: g.due,
+      projects: g.projects.map(p => ({
+        projectNo: p.projectNo, title: p.title, hasValue: p.hasValue, contractValue: p.contractValue, paid: p.paid, due: p.due,
+        payments: p.payments.slice().sort((a, b) => (a.date || "").localeCompare(b.date || "")).map(x => {
+          const info = paymentRowInfo(x);
+          return { date: x.date, source: info.kind, particulars: info.text, amount: x.amount };
+        }),
+      })),
+    }));
+    const filterLabel = statusFilter === "open" ? "Open projects" : statusFilter === "all" ? "All projects" : `${statusMeta(statusFilter).label} projects`;
+    exportVendorSummaryPDF({
+      vendors, withTransactions,
+      subtitle: `${filterLabel}${search ? ` matching "${search}"` : ""} · ${vendors.length} vendor(s)`,
+      fileName: `vendor_summary${withTransactions ? "_with_transactions" : ""}.pdf`,
+    });
+    setSummaryOpen(false);
+  }
 
   function exportStatement(p) {
     exportStatementPDF({
@@ -3167,6 +2661,7 @@ function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, supp
               ContractValue: p.contractValue, ProjectPaid: p.paid, ProjectDue: p.due,
               PaymentDate: x?.date || "", PaymentSource: x ? paymentRowInfo(x).kind : "", PaymentDetail: x ? paymentRowInfo(x).text : "", PaymentAmount: x ? x.amount : "",
             }))))}>⬇ Export Excel</button>
+            <button className="btn btn-ghost btn-sm" disabled={vendorGroups.length === 0} onClick={() => setSummaryOpen(true)}>📄 Vendor Summary PDF</button>
           </div>
 
           {vendorGroups.length === 0 ? (
@@ -3218,6 +2713,7 @@ function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, supp
 
                           <div style={{ marginTop: 10, display: "flex", justifyContent: "flex-end", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
                             <button className="btn btn-primary btn-sm" disabled={!ready} onClick={() => setLinkFor(p)}>🔗 Link Payment</button>
+                            <button className="btn btn-ghost btn-sm" disabled={!ready} onClick={() => setCashFor(p)}>💵 Partner Cash</button>
                             <button className="btn btn-ghost btn-sm" disabled={!ready} onClick={() => setManualFor(p)}>+ Manual Payment</button>
                             <button className="btn btn-info btn-sm" onClick={() => setStmtFor(p)}>📄 Statement</button>
                             <button className="btn btn-ghost btn-sm" onClick={() => openEdit(p)}>Edit</button>
@@ -3289,7 +2785,10 @@ function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, supp
                     <td><BadgeComponent type={x.sourceType === "bank" ? "blue" : "accent"}>{x.sourceLabel}</BadgeComponent></td>
                     <td className="r mono">{fmt(x.amount)}</td>
                     <td className="r mono" style={{ fontWeight: 700, color: "var(--amber)" }}>{fmt(x.remaining)}</td>
-                    <td className="r"><button className="btn btn-primary btn-sm" disabled={!ready || !(projects || []).length} onClick={() => setAssignItem(x)}>Assign</button></td>
+                    <td className="r" style={{ whiteSpace: "nowrap" }}>
+                      {x.sourceType !== "bank" && <button className="btn btn-ghost btn-sm" style={{ marginRight: 6 }} onClick={() => setVendorEditItem(x)}>Set vendor</button>}
+                      <button className="btn btn-primary btn-sm" disabled={!ready || !(projects || []).length} onClick={() => setAssignItem(x)}>Assign</button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -3348,6 +2847,25 @@ function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, supp
         />
       )}
 
+      {summaryOpen && (
+        <Modal title="Vendor Summary PDF" onClose={() => setSummaryOpen(false)}
+          foot={<><button className="btn btn-ghost" onClick={() => setSummaryOpen(false)}>Cancel</button><button className="btn btn-primary" onClick={() => exportVendorSummary(summaryWithTx)}>📄 Download PDF</button></>}>
+          <p style={{ fontSize: 12.5, color: "var(--text2)", lineHeight: 1.6, marginBottom: 12 }}>
+            One line per vendor with <strong>Total</strong> (contract value), <strong>Paid</strong> and <strong>Left</strong>. Covers the {vendorGroups.length} vendor(s) matching your current search and status filter.
+          </p>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--text)" }}>
+            <input type="checkbox" checked={summaryWithTx} onChange={e => setSummaryWithTx(e.target.checked)} />
+            Include transactions (every project and payment under each vendor)
+          </label>
+          <p className="mono" style={{ fontSize: 11, color: "var(--text3)", marginTop: 10 }}>
+            {summaryWithTx ? "Page 1 is the summary; the transactions follow on the next pages." : "Summary only — a single page for most setups."}
+          </p>
+        </Modal>
+      )}
+
+      {cashFor && <PartnerCashModal project={cashFor} partners={partners} onClose={() => setCashFor(null)} onSave={d => savePartnerCash(cashFor, d)} />}
+      {vendorEditItem && <SetVendorModal item={vendorEditItem} vendorNames={vendorNames} onClose={() => setVendorEditItem(null)} onSave={name => saveItemVendor(vendorEditItem, name)} />}
+
       {manualFor && <ManualPaymentModal project={manualFor} onClose={() => setManualFor(null)} onSave={data => addManualPayment(manualFor, data)} />}
 
       {stmtFor && (() => {
@@ -3376,6 +2894,55 @@ function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, supp
         );
       })()}
     </div>
+  );
+}
+
+function PartnerCashModal({ project, partners, onClose, onSave }) {
+  const [pf, setPf] = useState({ partnerName: partners[0] || "", date: today(), amount: "", description: "", ref: "" });
+  const setP = k => v => setPf(x => ({ ...x, [k]: v }));
+  const isCapex = CAP_CATS.some(c => c.id === project.category);
+  return (
+    <Modal title={`Partner Cash Payment: ${project.vendorName} — ${project.title}`} onClose={onClose}
+      foot={<><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-primary" onClick={() => onSave(pf)}>Save & Link</button></>}>
+      <p style={{ fontSize: 11.5, color: "var(--text3)", marginBottom: 12, lineHeight: 1.5 }}>
+        A partner paid {project.vendorName} in cash. This records it as {isCapex ? "a capital expense" : "an expense"} against the vendor, credits the partner's
+        current account, and links the full amount to this project.
+      </p>
+      <div className="form-row cols-2">
+        <FG label="Paid by (partner) *">
+          <select value={pf.partnerName} onChange={e => setP("partnerName")(e.target.value)}>
+            {partners.length === 0 && <option value="">No partners found</option>}
+            {partners.map(n => <option key={n} value={n}>{n}</option>)}
+          </select>
+        </FG>
+        <FG label="Date"><input type="date" value={pf.date} onChange={e => setP("date")(e.target.value)} /></FG>
+      </div>
+      <div className="form-row cols-2">
+        <FG label="Amount (₹) *"><input type="number" value={pf.amount} onChange={e => setP("amount")(e.target.value)} /></FG>
+        <FG label="Reference"><input value={pf.ref} onChange={e => setP("ref")(e.target.value)} /></FG>
+      </div>
+      <div className="form-row"><FG label="Description *"><input value={pf.description} onChange={e => setP("description")(e.target.value)} placeholder="e.g. Cash advance for labour" /></FG></div>
+    </Modal>
+  );
+}
+
+function SetVendorModal({ item, vendorNames, onClose, onSave }) {
+  const [name, setName] = useState(item.vendor || "");
+  return (
+    <Modal title="Set Vendor for Cash Payment" onClose={onClose}
+      foot={<><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-primary" onClick={() => onSave(name)}>Save Vendor</button></>}>
+      <div style={{ background: "var(--bg3)", padding: 12, borderRadius: "var(--r)", marginBottom: 14, fontSize: 12.5 }}>
+        <div style={{ fontWeight: 700 }}>{fmt(item.amount)} · {item.sourceLabel}</div>
+        <div className="mono" style={{ color: "var(--text3)", fontSize: 11, marginTop: 3 }}>{item.date} · {item.description}</div>
+        <div className="mono" style={{ color: "var(--text3)", fontSize: 11, marginTop: 3 }}>Currently under: {item.vendor || "(no vendor)"}</div>
+      </div>
+      <div className="form-row">
+        <FG label="Vendor *" note="Pick the vendor who received the cash so it lines up with their projects. Only the vendor name on this entry changes.">
+          <input list="vp-setvendor" value={name} onChange={e => setName(e.target.value)} />
+          <datalist id="vp-setvendor">{vendorNames.map(n => <option key={n} value={n} />)}</datalist>
+        </FG>
+      </div>
+    </Modal>
   );
 }
 
