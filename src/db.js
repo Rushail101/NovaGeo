@@ -248,16 +248,19 @@ export async function savePartnerCashbookEntry(data) {
 }
 
 // Atomically cross-posts an off-statement partner direct cash expenditure
-export async function recordPartnerDirectCashExpense(partnerName, date, category, amount, description, ref, isCapex = false) {
+export async function recordPartnerDirectCashExpense(partnerName, date, category, amount, description, ref, isCapex = false, vendorName = '') {
+  // The vendor is who actually got the cash. Falling back to ref/partner only
+  // when no vendor was given keeps old call sites working.
+  const paidTo = (vendorName || '').trim() || ref || partnerName;
   let createdItem = null;
   if (isCapex) {
     createdItem = await saveCapitalItem({
-      date, category, description, amount: +amount, paidTo: ref || partnerName,
+      date, category, description, amount: +amount, paidTo,
       reference: ref, paymentMode: 'partner_personal', paidByPartner: partnerName, fundedBy: 'own'
     });
   } else {
     createdItem = await saveExpense({
-      date, category, description, amount: +amount, paidTo: ref || partnerName,
+      date, category, description, amount: +amount, paidTo,
       reference: ref, opsAuto: false, paymentMode: 'partner_personal', paidByPartner: partnerName
     });
   }
@@ -270,6 +273,14 @@ export async function recordPartnerDirectCashExpense(partnerName, date, category
   });
 
   return { item: createdItem, cashbookEntry: cb, isCapex };
+}
+
+// Re-point an existing cash expense / capex entry at the right vendor
+// (older partner-cash entries were saved under the partner's name).
+export async function setPaidTo(table, id, vendorName) {
+  if (table !== 'expenses' && table !== 'capital_items') throw new Error('Unsupported table');
+  const { error } = await supabase.from(table).update({ paid_to: (vendorName || '').trim() || null }).eq('id', id);
+  if (error) throw error;
 }
 
 // ── BANK STATEMENT & PROMOTIONS ───────────────────────────────────────────────
