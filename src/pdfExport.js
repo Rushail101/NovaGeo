@@ -129,22 +129,31 @@ export function exportVendorSummaryPDF({ vendors, withTransactions = false, subt
     { contracted: 0, paid: 0, due: 0 }
   );
 
-  // 1) Overview — one row per vendor.
+  // 1) Overview — one row per project, so a vendor with several projects keeps them separate.
+  const R = c => ({ content: c, styles: { halign: "right" } });
+  const projectRows = [];
+  vendors.forEach(v => v.projects.forEach(p => projectRows.push([
+    rupeeSafe(v.vendor),
+    rupeeSafe(`${p.projectNo} - ${p.title}`),
+    R(p.hasValue ? money(p.contractValue) : "Open-ended"),
+    R(money(p.paid)),
+    R(p.hasValue ? money(p.due) : "-"),
+  ])));
+
   autoTable(doc, {
     startY: y,
-    head: [["Vendor", ...["Projects", "Total", "Paid", "Left"].map(h => ({ content: h, styles: { halign: "right" } }))]],
-    body: vendors.map(v => [rupeeSafe(v.vendor), String(v.projects.length), money(v.contracted), money(v.paid), money(v.due)]),
-    foot: [["TOTAL", ...[String(vendors.reduce((s, v) => s + v.projects.length, 0)), money(totals.contracted), money(totals.paid), money(totals.due)].map(c => ({ content: c, styles: { halign: "right" } }))]],
+    head: [["Vendor", "Project", R("Total"), R("Paid"), R("Left")]],
+    body: projectRows,
+    foot: [["TOTAL", `${projectRows.length} project(s)`, R(money(totals.contracted)), R(money(totals.paid)), R(money(totals.due))]],
     showFoot: "lastPage",
     styles: { fontSize: 9, cellPadding: 6, overflow: "linebreak" },
     headStyles: { fillColor: [25, 25, 25], textColor: 255 },
     footStyles: { fillColor: [235, 235, 235], textColor: 20, fontStyle: "bold" },
     alternateRowStyles: { fillColor: [247, 247, 247] },
     columnStyles: {
-      1: { halign: "right", cellWidth: 52 },
-      2: { halign: "right", minCellWidth: 82 },
-      3: { halign: "right", minCellWidth: 82 },
-      4: { halign: "right", minCellWidth: 82 },
+      2: { halign: "right", minCellWidth: 78 },
+      3: { halign: "right", minCellWidth: 78 },
+      4: { halign: "right", minCellWidth: 78 },
     },
     margin: { left: 40, right: 40 },
   });
@@ -152,7 +161,7 @@ export function exportVendorSummaryPDF({ vendors, withTransactions = false, subt
   doc.setFontSize(8);
   doc.setTextColor(120);
   doc.text(
-    "Total = contract value of the vendor's projects. Paid = all payments linked to them. Left = balance on projects that have a contract value.",
+    "Total = project contract value. Paid = payments linked to the project. Left = balance on projects that have a contract value.",
     40, doc.lastAutoTable.finalY + 14, { maxWidth: pageWidth - 80 }
   );
   doc.setTextColor(0);
