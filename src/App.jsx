@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect } from "react";
 import * as XLSX from "xlsx";
 import * as db from "./db.js";
 import * as vpdb from "./vendorProjectsDb.js";
+import * as loansdb from "./loansDb.js";
 import { exportStatementPDF, exportVendorSummaryPDF } from "./pdfExport.js";
 
 // ── Design System ─────────────────────────────────────────────────────────────
@@ -391,6 +392,7 @@ const NAV = [
   { id:"capital", label:"Capital & Infra", icon:"🏗", group:"Commercial" },
   { id:"bankstatement", label:"Bank Statement", icon:"🏦", group:"Banking" },
   { id:"partners", label:"Partners & Capital", icon:"🤝", group:"Banking" },
+  { id:"loans", label:"Loans", icon:"💳", group:"Banking" },
   { id:"balancesheet", label:"Balance Sheet", icon:"🏛", group:"Reports" },
   { id:"suppliers", label:"Suppliers", icon:"⛏", group:"Masters" },
 ];
@@ -520,6 +522,8 @@ export default function App() {
   const [bankLabels, setBankLabels] = useState({});
   const [partnerCashbook, setPartnerCashbook] = useState([]);
   const [vendorProjects, setVendorProjects] = useState([]);
+  const [loanEntries, setLoanEntries] = useState([]);
+  const [loanStatus, setLoanStatus] = useState({ ready: true, error: "" });
   const [projectPayments, setProjectPayments] = useState([]);
   const [vpStatus, setVpStatus] = useState({ ready: true, error: "" });
 
@@ -543,6 +547,12 @@ export default function App() {
         setVpStatus({ ready: v.ready, error: v.error });
       } catch (err) {
         setVpStatus({ ready: false, error: err.message || String(err) });
+      }
+      try {
+        const l = await loansdb.loadLoans();
+        setLoanEntries(l.entries); setLoanStatus({ ready: l.ready, error: l.error });
+      } catch (err) {
+        setLoanStatus({ ready: false, error: err.message || String(err) });
       } finally {
         setLoading(false);
       }
@@ -616,6 +626,7 @@ export default function App() {
             {view === "opscosts" && <MonthlyOpsCostsView {...{ expenses, setExpenses }} />}
             {view === "capital" && <CapitalRegisterView {...{ bankTxns, bankLabels, capitalItems, capitalProjects, setCapitalProjects }} />}
             {view === "bankstatement" && <BankStatementGroupingView {...{ bankBatches, setBankBatches, bankTxns, setBankTxns, bankLabels, setBankLabels, capitalItems, setCapitalItems, setExpenses, setPartnerCashbook }} />}
+            {view === "loans" && <LoansView {...{ bankTxns, bankLabels, loanEntries, setLoanEntries, loanStatus, vendorProjects, setProjectPayments }} />}
             {view === "partners" && (
               <PartnersCapitalDashboard
                 bankTxns={bankTxns}
@@ -1670,6 +1681,277 @@ function BankStatementGroupingView({ bankBatches, setBankBatches, bankTxns, setB
     </div>
   );
 }
+
+// ── Loans: money borrowed (from a bank or anyone else) and what's been repaid ──
+//  received  = a bank-statement credit you mark as a loan
+//  direct    = the lender paid a vendor directly (not through your bank); added by hand and
+//              optionally booked against a Vendor Project so it counts as paid there
+//  repayment = money paid back to the lender
+// Bank-statement counterparties already tagged "Loan / Bank" are included automatically.
+const LOAN_KINDS = {
+  received: { label: "Received in bank", badge: "green" },
+  direct: { label: "Paid to vendor", badge: "purple" },
+  repayment: { label: "Repayment", badge: "amber" },
+};
+
+function LoansView({ bankTxns, bankLabels, loanEntries, setLoanEntries, loanStatus, vendorProjects, setProjectPayments }) {
+  const [modal, setModal] = useState(null); // "mark" | "direct" | "repay"
+  const groups = useCounterpartyGroups(bankTxns, bankLabels);
+  const ready = loanStatus?.ready !== false;
+
+  const legacy = useMemo(() => groups.filter(g => g.type === "loan"), [groups]);
+  const legacyTxnIds = useMemo(() => new Set(legacy.flatMap(g => g.txns.map(t => String(t.id)))), [legacy]);
+  const markedIds = useMemo(() => new Set((loanEntries || []).filter(e => e.bankTxnId != null).map(e => String(e.bankTxnId))), [loanEntries]);
+
+  const lenders = useMemo(() => {
+    const m = {};
+    const get = name => {
+      const n = (name || "").trim() || "Unnamed lender";
+      const k = n.toLowerCase();
+      if (!m[k]) m[k] = { name: n, received: 0, direct: 0, repaid: 0 };
+      return m[k];
+    };
+    legacy.forEach(g => { const l = get(g.label); l.received += g.totalCredit; l.repaid += g.totalDebit; });
+    (loanEntries || []).forEach(e => {
+      const l = get(e.lender);
+      if (e.kind === "received") l.received += e.amount;
+      else if (e.kind === "direct") l.direct += e.amount;
+      else l.repaid += e.amount;
+    });
+    return Object.values(m)
+      .map(l => ({ ...l, outstanding: l.received + l.direct - l.repaid }))
+      .sort((a, b) => b.outstanding - a.outstanding);
+  }, [legacy, loanEntries]);
+
+  const tot = lenders.reduce((a, l) => ({ received: a.received + l.received, direct: a.direct + l.direct, repaid: a.repaid + l.repaid, outstanding: a.outstanding + l.outstanding }), { received: 0, direct: 0, repaid: 0, outstanding: 0 });
+  const lenderNames = lenders.map(l => l.name);
+  const vendorNames = useMemo(() => [...new Set((vendorProjects || []).map(p => p.vendorName).filter(Boolean))].sort((a, b) => a.localeCompare(b)), [vendorProjects]);
+
+  async function addEntry(data) {
+    try {
+      const row = await loansdb.saveLoanEntry(data);
+      setLoanEntries(es => [row, ...es]);
+      return true;
+    } catch (err) { alert(err.message); return false; }
+  }
+
+  async function markReceipt(txn, lender) {
+    if (!(lender || "").trim()) return alert("Enter the lender's name first.");
+    return addEntry({ date: txn.date, kind: "received", lender, amount: txn.credit, bankTxnId: txn.id, note: txn.description });
+  }
+
+  async function saveDirect(d) {
+    if (!d.lender.trim()) return alert("Enter the lender's name.");
+    if (!d.vendorName.trim()) return alert("Enter the vendor who was paid.");
+    if (!(+d.amount > 0)) return alert("Enter an amount greater than zero.");
+    const project = d.projectId ? (vendorProjects || []).find(p => String(p.id) === d.projectId) : null;
+    try {
+      let pay = null;
+      if (project) {
+        pay = await vpdb.addProjectPayment({
+          projectId: project.id, amount: +d.amount, date: d.date, paymentMode: "bank",
+          reference: `Loan: ${d.lender.trim()}`, remarks: d.note.trim() || `Paid directly by ${d.lender.trim()}`,
+        });
+        setProjectPayments(pp => [pay, ...pp]);
+      }
+      const ok = await addEntry({ date: d.date, kind: "direct", lender: d.lender, amount: d.amount, vendorName: d.vendorName, projectId: project ? project.id : null, projectPaymentId: pay ? pay.id : null, note: d.note });
+      if (ok) setModal(null);
+    } catch (err) { alert(err.message); }
+  }
+
+  async function saveRepayment(d) {
+    if (!d.lender.trim()) return alert("Enter the lender's name.");
+    if (!(+d.amount > 0)) return alert("Enter an amount greater than zero.");
+    if (await addEntry({ date: d.date, kind: "repayment", lender: d.lender, amount: d.amount, note: d.note })) setModal(null);
+  }
+
+  async function removeEntry(e) {
+    const hasPay = e.projectPaymentId != null;
+    if (!confirm(`Delete this ${LOAN_KINDS[e.kind]?.label.toLowerCase() || "loan"} entry of ${fmt(e.amount)}?${hasPay ? "\n\nThe matching payment on the vendor project is removed too." : ""}`)) return;
+    try {
+      if (hasPay) {
+        try { await vpdb.deleteProjectPayment(e.projectPaymentId); } catch (_) { /* already removed from the project */ }
+        setProjectPayments(pp => pp.filter(x => String(x.id) !== String(e.projectPaymentId)));
+      }
+      await loansdb.deleteLoanEntry(e.id);
+      setLoanEntries(es => es.filter(x => x.id !== e.id));
+    } catch (err) { alert(err.message); }
+  }
+
+  const ledger = [...(loanEntries || [])].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+
+  return (
+    <div>
+      {!ready && (
+        <div style={{ background: "var(--bg3)", border: "1px solid var(--amber)", borderRadius: "var(--r)", padding: 14, marginBottom: 16, fontSize: 12.5 }}>
+          <div style={{ fontWeight: 700, marginBottom: 4 }}>One-time setup: create the loans table</div>
+          Run this in the Supabase SQL editor, then refresh the app. If your other tables use row-level-security policies, add the same policy to <span className="mono">loan_entries</span>.
+          <pre className="mono" style={{ margin: "8px 0 0", whiteSpace: "pre-wrap", fontSize: 11 }}>{loansdb.LOANS_SETUP_SQL}</pre>
+          {loanStatus?.error && <div className="mono" style={{ color: "var(--text3)", fontSize: 10.5, marginTop: 6 }}>{loanStatus.error}</div>}
+        </div>
+      )}
+
+      <div className="stats-grid-5">
+        <StatCard label="Loan Drawn" value={fmt(tot.received + tot.direct)} color="blue" sub="Received + paid to vendors" />
+        <StatCard label="Received in Bank" value={fmt(tot.received)} color="green" sub="Marked bank receipts" />
+        <StatCard label="Paid to Vendors" value={fmt(tot.direct)} color="purple" sub="Lender paid directly" />
+        <StatCard label="Repaid" value={fmt(tot.repaid)} color="amber" sub="Principal + interest paid" />
+        <StatCard label="Outstanding" value={fmt(tot.outstanding)} color={tot.outstanding > 0 ? "red" : "green"} sub="Drawn − repaid" />
+      </div>
+
+      <div className="filter-bar" style={{ marginBottom: 14 }}>
+        <button className="btn btn-primary" disabled={!ready} onClick={() => setModal("mark")}>🏦 Mark bank receipt as loan</button>
+        <button className="btn btn-primary" disabled={!ready} onClick={() => setModal("direct")}>+ Lender paid a vendor directly</button>
+        <button className="btn btn-ghost" disabled={!ready} onClick={() => setModal("repay")}>+ Record repayment</button>
+        <button className="btn btn-ghost btn-sm" onClick={() => exportRowsToExcel("loans", ledger.map(e => ({ Date: e.date, Type: LOAN_KINDS[e.kind]?.label || e.kind, Lender: e.lender, Vendor: e.vendorName, Amount: e.amount, Note: e.note })))}>⬇ Export Excel</button>
+      </div>
+
+      <div className="table-wrap" style={{ marginBottom: 18 }}>
+        <div className="table-toolbar"><h3>By lender</h3></div>
+        <table>
+          <thead><tr><th>Lender</th><th className="r">Received in bank</th><th className="r">Paid to vendors</th><th className="r">Repaid</th><th className="r">Outstanding</th></tr></thead>
+          <tbody>
+            {lenders.length === 0 ? (
+              <tr><td colSpan={5} style={{ textAlign: "center", color: "var(--text3)", padding: 24 }}>No loans recorded yet</td></tr>
+            ) : lenders.map(l => (
+              <tr key={l.name}>
+                <td style={{ fontWeight: 600 }}>{l.name}</td>
+                <td className="r mono">{fmt(l.received)}</td>
+                <td className="r mono">{fmt(l.direct)}</td>
+                <td className="r mono">{fmt(l.repaid)}</td>
+                <td className="r mono" style={{ fontWeight: 700, color: l.outstanding > 0 ? "var(--red)" : "var(--green)" }}>{fmt(l.outstanding)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {legacy.length > 0 && <div className="mono" style={{ fontSize: 11, color: "var(--text3)", padding: "8px 16px 12px" }}>Includes bank-statement counterparties tagged "Loan / Bank": {legacy.map(g => g.label).join(", ")} (credits = received, debits = repaid).</div>}
+      </div>
+
+      <div className="table-wrap">
+        <div className="table-toolbar"><h3>Loan entries</h3></div>
+        <table>
+          <thead><tr><th>Date</th><th>Type</th><th>Lender</th><th>Vendor</th><th>Note</th><th className="r">Amount</th><th className="r">Actions</th></tr></thead>
+          <tbody>
+            {ledger.length === 0 ? (
+              <tr><td colSpan={7} style={{ textAlign: "center", color: "var(--text3)", padding: 24 }}>Nothing here yet — mark a bank receipt as a loan, or add a payment the lender made straight to a vendor.</td></tr>
+            ) : ledger.map(e => (
+              <tr key={e.id}>
+                <td className="mono" style={{ fontSize: 11, color: "var(--text3)" }}>{e.date}</td>
+                <td><BadgeComponent type={LOAN_KINDS[e.kind]?.badge}>{LOAN_KINDS[e.kind]?.label || e.kind}</BadgeComponent></td>
+                <td style={{ fontWeight: 600 }}>{e.lender}</td>
+                <td style={{ fontSize: 12 }}>{e.vendorName || "—"}{e.projectPaymentId != null && <div style={{ color: "var(--text3)", fontSize: 10.5 }}>linked to a vendor project</div>}</td>
+                <td style={{ fontSize: 12, color: "var(--text2)" }}>{e.note || "—"}</td>
+                <td className="r mono" style={{ fontWeight: 700 }}>{fmt(e.amount)}</td>
+                <td className="r"><RowActions onDelete={() => removeEntry(e)} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {modal === "mark" && <MarkLoanReceiptModal bankTxns={bankTxns} bankLabels={bankLabels} hidden={id => legacyTxnIds.has(id) || markedIds.has(id)} lenderNames={lenderNames} onMark={markReceipt} onClose={() => setModal(null)} />}
+      {modal === "direct" && <LoanDirectModal lenderNames={lenderNames} vendorNames={vendorNames} projects={vendorProjects || []} onSave={saveDirect} onClose={() => setModal(null)} />}
+      {modal === "repay" && <LoanRepaymentModal lenderNames={lenderNames} onSave={saveRepayment} onClose={() => setModal(null)} />}
+    </div>
+  );
+}
+
+function MarkLoanRow({ txn, defaultLender, lenderNames, onMark }) {
+  const [lender, setLender] = useState(defaultLender);
+  const [busy, setBusy] = useState(false);
+  return (
+    <tr>
+      <td className="mono" style={{ fontSize: 11, color: "var(--text3)" }}>{txn.date}</td>
+      <td style={{ fontSize: 12 }}>{txn.description}</td>
+      <td className="r mono" style={{ fontWeight: 700, color: "var(--green)" }}>{fmt(txn.credit)}</td>
+      <td className="r"><input list="loan-lenders" value={lender} onChange={e => setLender(e.target.value)} placeholder="Lender" style={{ width: 150, background: "var(--bg3)", border: "1px solid var(--border2)", borderRadius: "var(--r)", padding: "5px 8px", color: "var(--text)" }} /></td>
+      <td className="r"><button className="btn btn-primary btn-sm" disabled={busy} onClick={async () => { setBusy(true); await onMark(txn, lender); setBusy(false); }}>Mark as loan</button></td>
+    </tr>
+  );
+}
+
+function MarkLoanReceiptModal({ bankTxns, bankLabels, hidden, lenderNames, onMark, onClose }) {
+  const [search, setSearch] = useState("");
+  const rows = useMemo(() => {
+    const s = search.toLowerCase();
+    return (bankTxns || [])
+      .filter(t => t && t.credit > 0 && !hidden(String(t.id)))
+      .filter(t => !s || (t.description || "").toLowerCase().includes(s) || String(t.credit).includes(s))
+      .sort((a, b) => (b.date || "").localeCompare(a.date || ""))
+      .slice(0, 200);
+  }, [bankTxns, search, hidden]);
+  return (
+    <Modal title="Mark a bank receipt as a loan" size="modal-lg" onClose={onClose}>
+      <p style={{ fontSize: 11.5, color: "var(--text3)", marginBottom: 10, lineHeight: 1.5 }}>
+        Money credited to your account that is really a loan. Type the lender and click Mark as loan — it then counts as loan received. Showing the 200 most recent credits; use search to find older ones.
+      </p>
+      <div className="filter-bar" style={{ marginBottom: 10 }}><SearchBar value={search} onChange={setSearch} placeholder="Search narration or amount…" style={{ minWidth: 240 }} /></div>
+      <datalist id="loan-lenders">{lenderNames.map(n => <option key={n} value={n} />)}</datalist>
+      <div className="table-wrap">
+        <table>
+          <thead><tr><th>Date</th><th>Narration</th><th className="r">Credit</th><th className="r">Lender</th><th className="r"></th></tr></thead>
+          <tbody>
+            {rows.length === 0 ? (
+              <tr><td colSpan={5} style={{ textAlign: "center", color: "var(--text3)", padding: 20 }}>No unmarked bank credits found</td></tr>
+            ) : rows.map(t => <MarkLoanRow key={t.id} txn={t} defaultLender={(bankLabels?.[t.key]?.label || "").trim()} lenderNames={lenderNames} onMark={onMark} />)}
+          </tbody>
+        </table>
+      </div>
+    </Modal>
+  );
+}
+
+function LoanDirectModal({ lenderNames, vendorNames, projects, onSave, onClose }) {
+  const [f, setF] = useState({ date: today(), lender: "", vendorName: "", amount: "", projectId: "", note: "" });
+  const set = k => v => setF(x => ({ ...x, [k]: v, ...(k === "vendorName" ? { projectId: "" } : {}) }));
+  const vendorProjects = projects.filter(p => normVendor(p.vendorName) === normVendor(f.vendorName));
+  return (
+    <Modal title="Lender paid a vendor directly" onClose={onClose}
+      foot={<><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-primary" onClick={() => onSave(f)}>Save</button></>}>
+      <p style={{ fontSize: 11.5, color: "var(--text3)", marginBottom: 12, lineHeight: 1.5 }}>
+        For when the bank pays the vendor straight from the loan, so it never shows in your bank statement. It counts as loan drawn, and if you pick a project it is also booked as a payment on that project.
+      </p>
+      <datalist id="loan-lenders-d">{lenderNames.map(n => <option key={n} value={n} />)}</datalist>
+      <datalist id="loan-vendors-d">{vendorNames.map(n => <option key={n} value={n} />)}</datalist>
+      <div className="form-row cols-2">
+        <FG label="Date"><input type="date" value={f.date} onChange={e => set("date")(e.target.value)} /></FG>
+        <FG label="Amount (₹) *"><input type="number" value={f.amount} onChange={e => set("amount")(e.target.value)} /></FG>
+      </div>
+      <div className="form-row cols-2">
+        <FG label="Lender *"><input list="loan-lenders-d" value={f.lender} onChange={e => set("lender")(e.target.value)} placeholder="e.g. HDFC Bank" /></FG>
+        <FG label="Vendor paid *"><input list="loan-vendors-d" value={f.vendorName} onChange={e => set("vendorName")(e.target.value)} /></FG>
+      </div>
+      <div className="form-row">
+        <FG label="Vendor project (optional)" note={vendorProjects.length === 0 && f.vendorName ? "No project found for this vendor name." : "Pick one to count this as paid on the project."}>
+          <select value={f.projectId} onChange={e => set("projectId")(e.target.value)}>
+            <option value="">Don't link to a project</option>
+            {vendorProjects.map(p => <option key={p.id} value={String(p.id)}>{p.projectNo} — {p.title}</option>)}
+          </select>
+        </FG>
+      </div>
+      <div className="form-row"><FG label="Note"><input value={f.note} onChange={e => set("note")(e.target.value)} placeholder="e.g. Machinery stage 2, loan disbursement" /></FG></div>
+    </Modal>
+  );
+}
+
+function LoanRepaymentModal({ lenderNames, onSave, onClose }) {
+  const [f, setF] = useState({ date: today(), lender: lenderNames[0] || "", amount: "", note: "" });
+  const set = k => v => setF(x => ({ ...x, [k]: v }));
+  return (
+    <Modal title="Record a loan repayment" onClose={onClose}
+      foot={<><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-primary" onClick={() => onSave(f)}>Save</button></>}>
+      <datalist id="loan-lenders-r">{lenderNames.map(n => <option key={n} value={n} />)}</datalist>
+      <div className="form-row cols-2">
+        <FG label="Date"><input type="date" value={f.date} onChange={e => set("date")(e.target.value)} /></FG>
+        <FG label="Amount (₹) *"><input type="number" value={f.amount} onChange={e => set("amount")(e.target.value)} /></FG>
+      </div>
+      <div className="form-row"><FG label="Lender *"><input list="loan-lenders-r" value={f.lender} onChange={e => set("lender")(e.target.value)} /></FG></div>
+      <div className="form-row"><FG label="Note"><input value={f.note} onChange={e => set("note")(e.target.value)} placeholder="e.g. EMI for October" /></FG></div>
+      <p style={{ fontSize: 11, color: "var(--text3)" }}>Repayments that already appear on the bank statement under a "Loan / Bank" counterparty are counted automatically — don't add those again.</p>
+    </Modal>
+  );
+}
+
 
 function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPartnerCashbook, setExpenses, setCapitalItems }) {
   const [activeTab, setActiveTab] = useState("overview");
