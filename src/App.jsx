@@ -626,7 +626,7 @@ export default function App() {
             {view === "opscosts" && <MonthlyOpsCostsView {...{ expenses, setExpenses }} />}
             {view === "capital" && <CapitalRegisterView {...{ bankTxns, bankLabels, capitalItems, capitalProjects, setCapitalProjects }} />}
             {view === "bankstatement" && <BankStatementGroupingView {...{ bankBatches, setBankBatches, bankTxns, setBankTxns, bankLabels, setBankLabels, capitalItems, setCapitalItems, setExpenses, setPartnerCashbook }} />}
-            {view === "loans" && <LoansView {...{ bankTxns, bankLabels, loanEntries, setLoanEntries, loanStatus, vendorProjects, setProjectPayments }} />}
+            {view === "loans" && <LoansView {...{ bankTxns, bankLabels, partnerCashbook, loanEntries, setLoanEntries, loanStatus, vendorProjects, setProjectPayments }} />}
             {view === "partners" && (
               <PartnersCapitalDashboard
                 bankTxns={bankTxns}
@@ -1689,19 +1689,29 @@ function BankStatementGroupingView({ bankBatches, setBankBatches, bankTxns, setB
 //  repayment = money paid back to the lender
 // Bank-statement counterparties already tagged "Loan / Bank" are included automatically.
 const LOAN_KINDS = {
-  received: { label: "Received in bank", badge: "green" },
+  received: { label: "Received", badge: "green" },
   direct: { label: "Paid to vendor", badge: "purple" },
   repayment: { label: "Repayment", badge: "amber" },
 };
 
-function LoansView({ bankTxns, bankLabels, loanEntries, setLoanEntries, loanStatus, vendorProjects, setProjectPayments }) {
-  const [modal, setModal] = useState(null); // "mark" | "direct" | "repay"
+function LoansView({ bankTxns, bankLabels, partnerCashbook, loanEntries, setLoanEntries, loanStatus, vendorProjects, setProjectPayments }) {
+  const [modal, setModal] = useState(null); // "mark" | "partner" | "direct" | "repay"
+  const [editing, setEditing] = useState(null);
   const groups = useCounterpartyGroups(bankTxns, bankLabels);
   const ready = loanStatus?.ready !== false;
 
   const legacy = useMemo(() => groups.filter(g => g.type === "loan"), [groups]);
   const legacyTxnIds = useMemo(() => new Set(legacy.flatMap(g => g.txns.map(t => String(t.id)))), [legacy]);
   const markedIds = useMemo(() => new Set((loanEntries || []).filter(e => e.bankTxnId != null).map(e => String(e.bankTxnId))), [loanEntries]);
+
+  // Partners = owner-tagged bank counterparties + anyone with a partner cashbook entry.
+  const partnerNames = useMemo(() => {
+    const m = {};
+    groups.forEach(g => { if (g.type === "owner") m[normVendor(g.label)] = g.label; });
+    (partnerCashbook || []).forEach(e => { const n = (e?.partnerName || "").trim(); if (n && !m[normVendor(n)]) m[normVendor(n)] = n; });
+    return Object.values(m).sort((a, b) => a.localeCompare(b));
+  }, [groups, partnerCashbook]);
+  const partnerSet = useMemo(() => new Set(partnerNames.map(normVendor)), [partnerNames]);
 
   const lenders = useMemo(() => {
     const m = {};
@@ -1719,12 +1729,14 @@ function LoansView({ bankTxns, bankLabels, loanEntries, setLoanEntries, loanStat
       else l.repaid += e.amount;
     });
     return Object.values(m)
-      .map(l => ({ ...l, outstanding: l.received + l.direct - l.repaid }))
+      .map(l => ({ ...l, isPartner: partnerSet.has(normVendor(l.name)), outstanding: l.received + l.direct - l.repaid }))
       .sort((a, b) => b.outstanding - a.outstanding);
-  }, [legacy, loanEntries]);
+  }, [legacy, loanEntries, partnerSet]);
 
   const tot = lenders.reduce((a, l) => ({ received: a.received + l.received, direct: a.direct + l.direct, repaid: a.repaid + l.repaid, outstanding: a.outstanding + l.outstanding }), { received: 0, direct: 0, repaid: 0, outstanding: 0 });
-  const lenderNames = lenders.map(l => l.name);
+  const bankOut = lenders.filter(l => !l.isPartner).reduce((s, l) => s + l.outstanding, 0);
+  const partnerOut = lenders.filter(l => l.isPartner).reduce((s, l) => s + l.outstanding, 0);
+  const lenderNames = [...new Set([...lenders.map(l => l.name), ...partnerNames])];
   const vendorNames = useMemo(() => [...new Set((vendorProjects || []).map(p => p.vendorName).filter(Boolean))].sort((a, b) => a.localeCompare(b)), [vendorProjects]);
 
   async function addEntry(data) {
@@ -1738,6 +1750,45 @@ function LoansView({ bankTxns, bankLabels, loanEntries, setLoanEntries, loanStat
   async function markReceipt(txn, lender) {
     if (!(lender || "").trim()) return alert("Enter the lender's name first.");
     return addEntry({ date: txn.date, kind: "received", lender, amount: txn.credit, bankTxnId: txn.id, note: txn.description });
+  }
+
+  async function markPartnerEntry(e) {
+    return addEntry({
+      date: e.entryDate, kind: "received", lender: e.partnerName, amount: e.amount, bankTxnId: `cb:${e.id}`,
+      note: `${e.type}${e.remarks ? ": " + e.remarks : ""}`,
+    });
+  }
+
+  async function saveEdit(e, d) {
+    if (!d.lender.trim()) return alert("Enter the lender's name.");
+    if (!(+d.amount > 0)) return alert("Enter an amount greater than zero.");
+    if (e.kind === "direct" && !d.vendorName.trim()) return alert("Enter the vendor who was paid.");
+    try {
+      let projectId = e.projectId, payId = e.projectPaymentId;
+      if (e.kind === "direct") {
+        const np = d.projectId ? (vendorProjects || []).find(p => String(p.id) === d.projectId) : null;
+        const reference = `Loan: ${d.lender.trim()}`;
+        const remarks = d.note.trim() || `Paid directly by ${d.lender.trim()}`;
+        if (np && payId != null && e.projectId != null && String(e.projectId) === String(np.id)) {
+          const row = await vpdb.updateProjectPayment(payId, { amount: d.amount, date: d.date, reference, remarks });
+          setProjectPayments(pp => pp.map(x => String(x.id) === String(payId) ? row : x));
+        } else {
+          if (payId != null) {
+            try { await vpdb.deleteProjectPayment(payId); } catch (_) { /* already gone */ }
+            setProjectPayments(pp => pp.filter(x => String(x.id) !== String(payId)));
+            payId = null; projectId = null;
+          }
+          if (np) {
+            const row = await vpdb.addProjectPayment({ projectId: np.id, amount: +d.amount, date: d.date, paymentMode: "bank", reference, remarks });
+            setProjectPayments(pp => [row, ...pp]);
+            payId = row.id; projectId = np.id;
+          }
+        }
+      }
+      const row = await loansdb.updateLoanEntry(e.id, { ...d, projectId, projectPaymentId: payId });
+      setLoanEntries(es => es.map(x => x.id === e.id ? row : x));
+      setEditing(null);
+    } catch (err) { alert(err.message); }
   }
 
   async function saveDirect(d) {
@@ -1793,14 +1844,15 @@ function LoansView({ bankTxns, bankLabels, loanEntries, setLoanEntries, loanStat
 
       <div className="stats-grid-5">
         <StatCard label="Loan Drawn" value={fmt(tot.received + tot.direct)} color="blue" sub="Received + paid to vendors" />
-        <StatCard label="Received in Bank" value={fmt(tot.received)} color="green" sub="Marked bank receipts" />
+        <StatCard label="Received" value={fmt(tot.received)} color="green" sub="Bank receipts + partner money" />
         <StatCard label="Paid to Vendors" value={fmt(tot.direct)} color="purple" sub="Lender paid directly" />
         <StatCard label="Repaid" value={fmt(tot.repaid)} color="amber" sub="Principal + interest paid" />
-        <StatCard label="Outstanding" value={fmt(tot.outstanding)} color={tot.outstanding > 0 ? "red" : "green"} sub="Drawn − repaid" />
+        <StatCard label="Outstanding" value={fmt(tot.outstanding)} color={tot.outstanding > 0 ? "red" : "green"} sub={`Banks ${fmt(bankOut)} · Partners ${fmt(partnerOut)}`} />
       </div>
 
       <div className="filter-bar" style={{ marginBottom: 14 }}>
         <button className="btn btn-primary" disabled={!ready} onClick={() => setModal("mark")}>🏦 Mark bank receipt as loan</button>
+        <button className="btn btn-primary" disabled={!ready} onClick={() => setModal("partner")}>🤝 Mark partner transaction as loan</button>
         <button className="btn btn-primary" disabled={!ready} onClick={() => setModal("direct")}>+ Lender paid a vendor directly</button>
         <button className="btn btn-ghost" disabled={!ready} onClick={() => setModal("repay")}>+ Record repayment</button>
         <button className="btn btn-ghost btn-sm" onClick={() => exportRowsToExcel("loans", ledger.map(e => ({ Date: e.date, Type: LOAN_KINDS[e.kind]?.label || e.kind, Lender: e.lender, Vendor: e.vendorName, Amount: e.amount, Note: e.note })))}>⬇ Export Excel</button>
@@ -1809,13 +1861,14 @@ function LoansView({ bankTxns, bankLabels, loanEntries, setLoanEntries, loanStat
       <div className="table-wrap" style={{ marginBottom: 18 }}>
         <div className="table-toolbar"><h3>By lender</h3></div>
         <table>
-          <thead><tr><th>Lender</th><th className="r">Received in bank</th><th className="r">Paid to vendors</th><th className="r">Repaid</th><th className="r">Outstanding</th></tr></thead>
+          <thead><tr><th>Lender</th><th>Type</th><th className="r">Received</th><th className="r">Paid to vendors</th><th className="r">Repaid</th><th className="r">Outstanding</th></tr></thead>
           <tbody>
             {lenders.length === 0 ? (
-              <tr><td colSpan={5} style={{ textAlign: "center", color: "var(--text3)", padding: 24 }}>No loans recorded yet</td></tr>
+              <tr><td colSpan={6} style={{ textAlign: "center", color: "var(--text3)", padding: 24 }}>No loans recorded yet</td></tr>
             ) : lenders.map(l => (
               <tr key={l.name}>
                 <td style={{ fontWeight: 600 }}>{l.name}</td>
+                <td><BadgeComponent type={l.isPartner ? "purple" : "blue"}>{l.isPartner ? "Partner" : "Bank / other"}</BadgeComponent></td>
                 <td className="r mono">{fmt(l.received)}</td>
                 <td className="r mono">{fmt(l.direct)}</td>
                 <td className="r mono">{fmt(l.repaid)}</td>
@@ -1842,7 +1895,7 @@ function LoansView({ bankTxns, bankLabels, loanEntries, setLoanEntries, loanStat
                 <td style={{ fontSize: 12 }}>{e.vendorName || "—"}{e.projectPaymentId != null && <div style={{ color: "var(--text3)", fontSize: 10.5 }}>linked to a vendor project</div>}</td>
                 <td style={{ fontSize: 12, color: "var(--text2)" }}>{e.note || "—"}</td>
                 <td className="r mono" style={{ fontWeight: 700 }}>{fmt(e.amount)}</td>
-                <td className="r"><RowActions onDelete={() => removeEntry(e)} /></td>
+                <td className="r"><RowActions onEdit={() => setEditing(e)} onDelete={() => removeEntry(e)} /></td>
               </tr>
             ))}
           </tbody>
@@ -1850,6 +1903,8 @@ function LoansView({ bankTxns, bankLabels, loanEntries, setLoanEntries, loanStat
       </div>
 
       {modal === "mark" && <MarkLoanReceiptModal bankTxns={bankTxns} bankLabels={bankLabels} hidden={id => legacyTxnIds.has(id) || markedIds.has(id)} lenderNames={lenderNames} onMark={markReceipt} onClose={() => setModal(null)} />}
+      {modal === "partner" && <MarkPartnerLoanModal cashbook={partnerCashbook} hidden={id => markedIds.has(id)} onMark={markPartnerEntry} onClose={() => setModal(null)} />}
+      {editing && <EditLoanEntryModal entry={editing} lenderNames={lenderNames} vendorNames={vendorNames} projects={vendorProjects || []} onSave={d => saveEdit(editing, d)} onClose={() => setEditing(null)} />}
       {modal === "direct" && <LoanDirectModal lenderNames={lenderNames} vendorNames={vendorNames} projects={vendorProjects || []} onSave={saveDirect} onClose={() => setModal(null)} />}
       {modal === "repay" && <LoanRepaymentModal lenderNames={lenderNames} onSave={saveRepayment} onClose={() => setModal(null)} />}
     </div>
@@ -1897,6 +1952,83 @@ function MarkLoanReceiptModal({ bankTxns, bankLabels, hidden, lenderNames, onMar
           </tbody>
         </table>
       </div>
+    </Modal>
+  );
+}
+
+function MarkPartnerLoanModal({ cashbook, hidden, onMark, onClose }) {
+  const [search, setSearch] = useState("");
+  const [busyId, setBusyId] = useState(null);
+  const rows = useMemo(() => {
+    const s = search.toLowerCase();
+    return (cashbook || [])
+      .filter(e => e && e.amount > 0 && !/draw|withdraw|repay/i.test(e.type || "") && !hidden(`cb:${e.id}`))
+      .filter(e => !s || `${e.partnerName} ${e.type} ${e.remarks}`.toLowerCase().includes(s) || String(e.amount).includes(s))
+      .sort((a, b) => (b.entryDate || "").localeCompare(a.entryDate || ""))
+      .slice(0, 200);
+  }, [cashbook, search, hidden]);
+  return (
+    <Modal title="Mark a partner transaction as a loan" size="modal-lg" onClose={onClose}>
+      <p style={{ fontSize: 11.5, color: "var(--text3)", marginBottom: 10, lineHeight: 1.5 }}>
+        Money a partner put in or paid on the firm's behalf (from the Partners & Capital cashbook). Marking it counts it as a loan from that partner. It does not change the partner's cashbook entry or capital account.
+      </p>
+      <div className="filter-bar" style={{ marginBottom: 10 }}><SearchBar value={search} onChange={setSearch} placeholder="Search partner, type, remarks or amount…" style={{ minWidth: 260 }} /></div>
+      <div className="table-wrap">
+        <table>
+          <thead><tr><th>Date</th><th>Partner</th><th>Type</th><th>Remarks</th><th className="r">Amount</th><th className="r"></th></tr></thead>
+          <tbody>
+            {rows.length === 0 ? (
+              <tr><td colSpan={6} style={{ textAlign: "center", color: "var(--text3)", padding: 20 }}>No unmarked partner entries found</td></tr>
+            ) : rows.map(e => (
+              <tr key={e.id}>
+                <td className="mono" style={{ fontSize: 11, color: "var(--text3)" }}>{e.entryDate}</td>
+                <td style={{ fontWeight: 600 }}>{e.partnerName}</td>
+                <td style={{ fontSize: 12 }}>{e.type}</td>
+                <td style={{ fontSize: 12, color: "var(--text2)" }}>{e.remarks || "—"}</td>
+                <td className="r mono" style={{ fontWeight: 700 }}>{fmt(e.amount)}</td>
+                <td className="r"><button className="btn btn-primary btn-sm" disabled={busyId === e.id} onClick={async () => { setBusyId(e.id); await onMark(e); setBusyId(null); }}>Mark as loan</button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Modal>
+  );
+}
+
+function EditLoanEntryModal({ entry, lenderNames, vendorNames, projects, onSave, onClose }) {
+  const [f, setF] = useState({
+    date: entry.date || today(), lender: entry.lender, amount: String(entry.amount), note: entry.note || "",
+    vendorName: entry.vendorName || "", projectId: entry.projectId != null ? String(entry.projectId) : "",
+  });
+  const set = k => v => setF(x => ({ ...x, [k]: v, ...(k === "vendorName" ? { projectId: "" } : {}) }));
+  const isDirect = entry.kind === "direct";
+  const vProjects = projects.filter(p => normVendor(p.vendorName) === normVendor(f.vendorName));
+  return (
+    <Modal title={`Edit ${LOAN_KINDS[entry.kind]?.label.toLowerCase() || "loan"} entry`} onClose={onClose}
+      foot={<><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-primary" onClick={() => onSave(f)}>Save Changes</button></>}>
+      <datalist id="loan-lenders-e">{lenderNames.map(n => <option key={n} value={n} />)}</datalist>
+      <datalist id="loan-vendors-e">{vendorNames.map(n => <option key={n} value={n} />)}</datalist>
+      {entry.bankTxnId != null && <p style={{ fontSize: 11, color: "var(--text3)", marginBottom: 10 }}>Marked from {String(entry.bankTxnId).startsWith("cb:") ? "a partner cashbook entry" : "a bank-statement receipt"}. Change the amount if only part of it was a loan.</p>}
+      <div className="form-row cols-2">
+        <FG label="Date"><input type="date" value={f.date} onChange={e => set("date")(e.target.value)} /></FG>
+        <FG label="Amount (₹) *"><input type="number" value={f.amount} onChange={e => set("amount")(e.target.value)} /></FG>
+      </div>
+      <div className="form-row"><FG label="Lender *"><input list="loan-lenders-e" value={f.lender} onChange={e => set("lender")(e.target.value)} /></FG></div>
+      {isDirect && (
+        <>
+          <div className="form-row"><FG label="Vendor paid *"><input list="loan-vendors-e" value={f.vendorName} onChange={e => set("vendorName")(e.target.value)} /></FG></div>
+          <div className="form-row">
+            <FG label="Vendor project" note="Changing this moves the payment to the new project.">
+              <select value={f.projectId} onChange={e => set("projectId")(e.target.value)}>
+                <option value="">Not linked to a project</option>
+                {vProjects.map(p => <option key={p.id} value={String(p.id)}>{p.projectNo} — {p.title}</option>)}
+              </select>
+            </FG>
+          </div>
+        </>
+      )}
+      <div className="form-row"><FG label="Note"><input value={f.note} onChange={e => set("note")(e.target.value)} /></FG></div>
     </Modal>
   );
 }
@@ -2580,18 +2712,28 @@ const normVendor = s => (s || "").trim().toLowerCase();
 const EPS = 0.005;
 
 // Projects with their payments, paid and due worked out.
+const isDeduction = x => x.paymentMode === "deduction";
+const DED_SEP = " | ref:";
+// A deduction remembers which ledger payment it was based on, so the same payment can't be deducted twice by accident.
+const dedKey = x => { const r = x.reference || ""; const i = r.indexOf(DED_SEP); return i >= 0 ? r.slice(i + DED_SEP.length) : null; };
+const dedLabel = x => { const r = x.reference || ""; const i = r.indexOf(DED_SEP); return i >= 0 ? r.slice(0, i) : r; };
+
 function summarizeProjects(projects, payments) {
   const byProject = {};
   (payments || []).forEach(p => { (byProject[p.projectId] = byProject[p.projectId] || []).push(p); });
   return (projects || []).map(p => {
     const pays = (byProject[p.id] || []).slice().sort((a, b) => (b.date || "").localeCompare(a.date || ""));
-    const paid = pays.reduce((s, x) => s + x.amount, 0);
+    // "deduction" rows are amounts the firm paid to someone else on this vendor's behalf
+    // (e.g. channels bought from a local vendor). They reduce what is still owed but are not cash paid to the vendor.
+    const deducted = pays.filter(isDeduction).reduce((s, x) => s + x.amount, 0);
+    const paid = pays.filter(x => !isDeduction(x)).reduce((s, x) => s + x.amount, 0);
+    const settled = paid + deducted;
     const hasValue = p.contractValue > 0;
     return {
-      ...p, payments: pays, paid, hasValue,
-      due: hasValue ? Math.max(0, p.contractValue - paid) : 0,
-      overpaid: hasValue ? Math.max(0, paid - p.contractValue) : 0,
-      pct: hasValue ? Math.min(100, (paid / p.contractValue) * 100) : 0,
+      ...p, payments: pays, paid, deducted, hasValue,
+      due: hasValue ? Math.max(0, p.contractValue - settled) : 0,
+      overpaid: hasValue ? Math.max(0, settled - p.contractValue) : 0,
+      pct: hasValue ? Math.min(100, (settled / p.contractValue) * 100) : 0,
     };
   });
 }
@@ -2677,6 +2819,7 @@ function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, supp
   const [unShowAll, setUnShowAll] = useState(false);
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [summaryWithTx, setSummaryWithTx] = useState(false);
+  const [deductFor, setDeductFor] = useState(null); // project to deduct a payment-to-someone-else from
   const [cashFor, setCashFor] = useState(null);       // project to record a partner cash payment against
   const [vendorEditItem, setVendorEditItem] = useState(null); // cash payment whose vendor is being corrected
 
@@ -2752,6 +2895,21 @@ function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, supp
       setManualFor(null);
     } catch (err) { alert(err.message); }
   }
+  // Money the firm paid to someone else on this vendor's behalf: reduces what's owed to the vendor
+  // without being linked to (or using up) the original payment, so that payment still counts for its own vendor.
+  async function addDeduction(project, d) {
+    if (!(+d.amount > 0)) return alert("Enter an amount greater than zero.");
+    if (!d.vendor.trim()) return alert("Enter who was paid.");
+    try {
+      const row = await vpdb.addProjectPayment({
+        projectId: project.id, amount: +d.amount, date: d.date, paymentMode: "deduction",
+        reference: `Paid to ${d.vendor.trim()}${d.key ? DED_SEP + d.key : ""}`,
+        remarks: (d.description || "").trim(),
+      });
+      setProjectPayments(pp => [row, ...pp]);
+      setDeductFor(null);
+    } catch (err) { alert(err.message); }
+  }
   async function unlinkPayment(p) {
     if (!confirm("Remove this payment from the project? The payment itself is not deleted.")) return;
     try {
@@ -2823,9 +2981,9 @@ function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, supp
     const m = {};
     filtered.forEach(p => {
       const k = normVendor(p.vendorName);
-      if (!m[k]) m[k] = { key: k, vendor: p.vendorName, projects: [], contracted: 0, paid: 0, due: 0 };
+      if (!m[k]) m[k] = { key: k, vendor: p.vendorName, projects: [], contracted: 0, paid: 0, deducted: 0, due: 0 };
       m[k].projects.push(p);
-      m[k].contracted += p.contractValue; m[k].paid += p.paid; m[k].due += p.due;
+      m[k].contracted += p.contractValue; m[k].paid += p.paid; m[k].deducted += p.deducted; m[k].due += p.due;
     });
     return Object.values(m).map(g => {
       const mine = poolItems.filter(x => normVendor(x.vendor) === g.key);
@@ -2856,15 +3014,16 @@ function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, supp
   const statusMeta = id => PROJECT_STATUSES.find(s => s.id === id) || { label: id, badge: "muted" };
   const paymentRowInfo = p => {
     const src = poolByKey[paymentSourceKey(p)];
+    if (isDeduction(p)) return { kind: "Deduction", badge: "amber", text: [dedLabel(p), p.remarks].filter(Boolean).join(" — ") || "—" };
     if (paymentSourceKey(p) == null) return { kind: "Manual", badge: "purple", text: p.reference || p.remarks || "—" };
     return { kind: src ? src.sourceLabel : "Linked", badge: src?.sourceType === "bank" ? "blue" : "accent", text: src?.description || p.remarks || "—" };
   };
 
   function exportVendorSummary(withTransactions) {
     const vendors = vendorGroups.map(g => ({
-      vendor: g.vendor, contracted: g.contracted, paid: g.paid, due: g.due,
+      vendor: g.vendor, contracted: g.contracted, paid: g.paid, deducted: g.deducted, due: g.due,
       projects: g.projects.map(p => ({
-        projectNo: p.projectNo, title: p.title, hasValue: p.hasValue, contractValue: p.contractValue, paid: p.paid, due: p.due,
+        projectNo: p.projectNo, title: p.title, hasValue: p.hasValue, contractValue: p.contractValue, paid: p.paid, deducted: p.deducted, due: p.due,
         payments: p.payments.slice().sort((a, b) => (a.date || "").localeCompare(b.date || "")).map(x => {
           const info = paymentRowInfo(x);
           return { date: x.date, source: info.kind, particulars: info.text, amount: x.amount };
@@ -2887,6 +3046,7 @@ function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, supp
       summary: [
         { label: p.hasValue ? "Contract Value" : "Contract Value", value: p.hasValue ? fmt(p.contractValue) : "Open-ended", color: [90, 160, 220] },
         { label: "Paid", value: fmt(p.paid), color: [70, 180, 100] },
+        ...(p.deducted > EPS ? [{ label: "Deducted", value: fmt(p.deducted), color: [150, 110, 200] }] : []),
         ...(p.hasValue ? [{ label: "Balance Due", value: fmt(p.due), color: [220, 150, 30] }] : []),
       ],
       columns: [
@@ -2940,7 +3100,7 @@ function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, supp
             </select>
             <button className="btn btn-ghost btn-sm" onClick={() => exportRowsToExcel("vendor_projects", filtered.flatMap(p => (p.payments.length ? p.payments : [null]).map(x => ({
               Project: p.projectNo, Vendor: p.vendorName, Title: p.title, Category: catLabel(p.category), Status: statusMeta(p.status).label,
-              ContractValue: p.contractValue, ProjectPaid: p.paid, ProjectDue: p.due,
+              ContractValue: p.contractValue, ProjectPaid: p.paid, ProjectDeducted: p.deducted, ProjectDue: p.due,
               PaymentDate: x?.date || "", PaymentSource: x ? paymentRowInfo(x).kind : "", PaymentDetail: x ? paymentRowInfo(x).text : "", PaymentAmount: x ? x.amount : "",
             }))))}>⬇ Export Excel</button>
             <button className="btn btn-ghost btn-sm" disabled={vendorGroups.length === 0} onClick={() => setSummaryOpen(true)}>📄 Vendor Summary PDF</button>
@@ -2981,6 +3141,7 @@ function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, supp
                             <div style={{ display: "flex", gap: 18, fontFamily: "var(--mono)", fontSize: 12.5, alignItems: "center" }}>
                               <div><div style={{ color: "var(--text3)", fontSize: 10 }}>CONTRACT</div><div style={{ fontWeight: 700 }}>{p.hasValue ? fmt(p.contractValue) : "Open-ended"}</div></div>
                               <div><div style={{ color: "var(--text3)", fontSize: 10 }}>PAID</div><div style={{ color: "var(--green)", fontWeight: 700 }}>{fmt(p.paid)}</div></div>
+                              {p.deducted > EPS && <div><div style={{ color: "var(--text3)", fontSize: 10 }}>DEDUCTED</div><div style={{ color: "var(--amber)", fontWeight: 700 }}>{fmt(p.deducted)}</div></div>}
                               {p.hasValue && (p.overpaid > EPS
                                 ? <span className="badge badge-red">OVERPAID {fmt(p.overpaid)}</span>
                                 : p.due > EPS ? <span className="due-badge">DUE {fmt(p.due)}</span> : <BadgeComponent type="green">Fully Paid</BadgeComponent>)}
@@ -2997,6 +3158,7 @@ function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, supp
                             <button className="btn btn-primary btn-sm" disabled={!ready} onClick={() => setLinkFor(p)}>🔗 Link Payment</button>
                             <button className="btn btn-ghost btn-sm" disabled={!ready} onClick={() => setCashFor(p)}>💵 Partner Cash</button>
                             <button className="btn btn-ghost btn-sm" disabled={!ready} onClick={() => setManualFor(p)}>+ Manual Payment</button>
+                            <button className="btn btn-ghost btn-sm" disabled={!ready} onClick={() => setDeductFor(p)}>➖ Deduct Payment to Others</button>
                             <button className="btn btn-info btn-sm" onClick={() => setStmtFor(p)}>📄 Statement</button>
                             <button className="btn btn-ghost btn-sm" onClick={() => openEdit(p)}>Edit</button>
                             <button className="btn btn-danger btn-sm" onClick={() => removeProject(p)}>Delete</button>
@@ -3145,6 +3307,7 @@ function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, supp
         </Modal>
       )}
 
+      {deductFor && <DeductionModal project={summarized.find(p => p.id === deductFor.id) || deductFor} items={poolItems} payments={projectPayments} onSave={d => addDeduction(deductFor, d)} onClose={() => setDeductFor(null)} />}
       {cashFor && <PartnerCashModal project={cashFor} partners={partners} onClose={() => setCashFor(null)} onSave={d => savePartnerCash(cashFor, d)} />}
       {vendorEditItem && <SetVendorModal item={vendorEditItem} vendorNames={vendorNames} onClose={() => setVendorEditItem(null)} onSave={name => saveItemVendor(vendorEditItem, name)} />}
 
@@ -3176,6 +3339,72 @@ function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, supp
         );
       })()}
     </div>
+  );
+}
+
+function DeductionModal({ project, items, payments, onSave, onClose }) {
+  const [search, setSearch] = useState("");
+  const [manual, setManual] = useState({ vendor: "", amount: "", date: today(), description: "" });
+  const vk = normVendor(project.vendorName);
+  // How much of each ledger payment has already been deducted somewhere.
+  const used = useMemo(() => {
+    const m = {};
+    (payments || []).filter(isDeduction).forEach(x => { const k = dedKey(x); if (k) m[k] = (m[k] || 0) + x.amount; });
+    return m;
+  }, [payments]);
+  const rows = useMemo(() => {
+    const s = search.toLowerCase();
+    return (items || [])
+      .filter(x => normVendor(x.vendor) !== vk)
+      .filter(x => !s || x.vendor.toLowerCase().includes(s) || x.description.toLowerCase().includes(s) || String(x.amount).includes(s))
+      .sort((a, b) => (b.date || "").localeCompare(a.date || ""))
+      .slice(0, 100);
+  }, [items, search, vk]);
+  return (
+    <Modal title={`Deduct a payment made to someone else: ${project.vendorName} — ${project.title}`} size="modal-lg" onClose={onClose}>
+      <p style={{ fontSize: 11.5, color: "var(--text3)", marginBottom: 12, lineHeight: 1.5 }}>
+        You paid another party for something {project.vendorName} should have supplied (e.g. channels from a local vendor). Deducting it lowers what is still owed to {project.vendorName}.
+        It is shown separately as <strong>Deducted</strong> (not as cash paid to them), and the original payment stays with the vendor you actually paid.
+      </p>
+      <div className="filter-bar" style={{ marginBottom: 10 }}><SearchBar value={search} onChange={setSearch} placeholder="Search vendor, narration or amount…" style={{ minWidth: 260 }} /></div>
+      <div className="table-wrap" style={{ marginBottom: 16 }}>
+        <table>
+          <thead><tr><th>Date</th><th>Paid to / Narration</th><th>Source</th><th className="r">Payment</th><th className="r">Deduct amount</th><th className="r"></th></tr></thead>
+          <tbody>
+            {rows.length === 0 ? (
+              <tr><td colSpan={6} style={{ textAlign: "center", color: "var(--text3)", padding: 20 }}>No payments to other vendors found</td></tr>
+            ) : rows.map(x => <DeductRow key={x.key} item={x} already={used[x.key] || 0} onDeduct={amt => onSave({ vendor: x.vendor || "(unnamed)", amount: amt, date: x.date || today(), description: x.description, key: x.key })} />)}
+          </tbody>
+        </table>
+      </div>
+      <div style={{ borderTop: "1px solid var(--border)", paddingTop: 12 }}>
+        <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>Not in the ledger? Add it manually</div>
+        <div className="form-row cols-2">
+          <FG label="Paid to *"><input value={manual.vendor} onChange={e => setManual(m => ({ ...m, vendor: e.target.value }))} placeholder="e.g. local channel vendor" /></FG>
+          <FG label="Amount (₹) *"><input type="number" value={manual.amount} onChange={e => setManual(m => ({ ...m, amount: e.target.value }))} /></FG>
+        </div>
+        <div className="form-row cols-2">
+          <FG label="Date"><input type="date" value={manual.date} onChange={e => setManual(m => ({ ...m, date: e.target.value }))} /></FG>
+          <FG label="Description"><input value={manual.description} onChange={e => setManual(m => ({ ...m, description: e.target.value }))} placeholder="e.g. Channels for ball mill frame" /></FG>
+        </div>
+        <button className="btn btn-primary" onClick={() => onSave({ ...manual, key: "" })}>Add Deduction</button>
+      </div>
+    </Modal>
+  );
+}
+
+function DeductRow({ item, already, onDeduct }) {
+  const left = Math.max(0, item.amount - already);
+  const [amt, setAmt] = useState(String(Math.round(left * 100) / 100));
+  return (
+    <tr>
+      <td className="mono" style={{ fontSize: 11, color: "var(--text3)" }}>{item.date}</td>
+      <td style={{ fontSize: 12 }}><div style={{ fontWeight: 600 }}>{item.vendor || "(no vendor name)"}</div><div style={{ color: "var(--text3)", fontSize: 11 }}>{item.description}</div></td>
+      <td style={{ fontSize: 11 }}>{item.sourceLabel}</td>
+      <td className="r mono">{fmt(item.amount)}{already > 0 && <div style={{ color: "var(--amber)", fontSize: 10.5 }}>{fmt(already)} already deducted</div>}</td>
+      <td className="r"><input type="number" value={amt} onChange={e => setAmt(e.target.value)} style={{ width: 110, textAlign: "right", background: "var(--bg3)", border: "1px solid var(--border2)", borderRadius: "var(--r)", padding: "5px 8px", color: "var(--text)" }} /></td>
+      <td className="r"><button className="btn btn-primary btn-sm" onClick={() => onDeduct(amt)}>Deduct</button></td>
+    </tr>
   );
 }
 
