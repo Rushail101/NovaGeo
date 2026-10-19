@@ -125,8 +125,8 @@ export function exportVendorSummaryPDF({ vendors, withTransactions = false, subt
   y += 6;
 
   const totals = vendors.reduce(
-    (a, v) => ({ contracted: a.contracted + v.contracted, paid: a.paid + v.paid, due: a.due + v.due }),
-    { contracted: 0, paid: 0, due: 0 }
+    (a, v) => ({ contracted: a.contracted + v.contracted, paid: a.paid + v.paid, deducted: a.deducted + (v.deducted || 0), due: a.due + v.due }),
+    { contracted: 0, paid: 0, deducted: 0, due: 0 }
   );
 
   // 1) Overview — one row per project, so a vendor with several projects keeps them separate.
@@ -137,14 +137,15 @@ export function exportVendorSummaryPDF({ vendors, withTransactions = false, subt
     rupeeSafe(`${p.projectNo} - ${p.title}`),
     R(p.hasValue ? money(p.contractValue) : "Open-ended"),
     R(money(p.paid)),
+    R(money(p.deducted || 0)),
     R(p.hasValue ? money(p.due) : "-"),
   ])));
 
   autoTable(doc, {
     startY: y,
-    head: [["Vendor", "Project", R("Total"), R("Paid"), R("Left")]],
+    head: [["Vendor", "Project", R("Total"), R("Paid"), R("Deducted"), R("Left")]],
     body: projectRows,
-    foot: [["TOTAL", `${projectRows.length} project(s)`, R(money(totals.contracted)), R(money(totals.paid)), R(money(totals.due))]],
+    foot: [["TOTAL", `${projectRows.length} project(s)`, R(money(totals.contracted)), R(money(totals.paid)), R(money(totals.deducted)), R(money(totals.due))]],
     showFoot: "lastPage",
     styles: { fontSize: 9, cellPadding: 6, overflow: "linebreak" },
     headStyles: { fillColor: [25, 25, 25], textColor: 255 },
@@ -153,7 +154,8 @@ export function exportVendorSummaryPDF({ vendors, withTransactions = false, subt
     columnStyles: {
       2: { halign: "right", minCellWidth: 78 },
       3: { halign: "right", minCellWidth: 78 },
-      4: { halign: "right", minCellWidth: 78 },
+      4: { halign: "right", minCellWidth: 70 },
+      5: { halign: "right", minCellWidth: 78 },
     },
     margin: { left: 40, right: 40 },
   });
@@ -161,7 +163,7 @@ export function exportVendorSummaryPDF({ vendors, withTransactions = false, subt
   doc.setFontSize(8);
   doc.setTextColor(120);
   doc.text(
-    "Total = project contract value. Paid = payments linked to the project. Left = balance on projects that have a contract value.",
+    "Total = contract value. Paid = payments to the vendor. Deducted = paid to others on the vendor's behalf. Left = Total - Paid - Deducted.",
     40, doc.lastAutoTable.finalY + 14, { maxWidth: pageWidth - 80 }
   );
   doc.setTextColor(0);
@@ -177,12 +179,12 @@ export function exportVendorSummaryPDF({ vendors, withTransactions = false, subt
     const span = (content, styles) => ({ content, colSpan: 4, styles });
     vendors.forEach(v => {
       body.push([span(
-        `${rupeeSafe(v.vendor)}   |   Total ${money(v.contracted)}   |   Paid ${money(v.paid)}   |   Left ${money(v.due)}`,
+        `${rupeeSafe(v.vendor)}   |   Total ${money(v.contracted)}   |   Paid ${money(v.paid)}   |   Deducted ${money(v.deducted || 0)}   |   Left ${money(v.due)}`,
         { fillColor: [25, 25, 25], textColor: 255, fontStyle: "bold" }
       )]);
       v.projects.forEach(p => {
         body.push([span(
-          `${rupeeSafe(p.projectNo)} - ${rupeeSafe(p.title)}   (${p.hasValue ? `Contract ${money(p.contractValue)}` : "Open-ended"}, Paid ${money(p.paid)}${p.hasValue ? `, Left ${money(p.due)}` : ""})`,
+          `${rupeeSafe(p.projectNo)} - ${rupeeSafe(p.title)}   (${p.hasValue ? `Contract ${money(p.contractValue)}` : "Open-ended"}, Paid ${money(p.paid)}${p.deducted ? `, Deducted ${money(p.deducted)}` : ""}${p.hasValue ? `, Left ${money(p.due)}` : ""})`,
           { fillColor: [225, 232, 240], fontStyle: "bold" }
         )]);
         if (!p.payments.length) {
