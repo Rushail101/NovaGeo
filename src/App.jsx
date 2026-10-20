@@ -3462,7 +3462,7 @@ function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, supp
     return { kind: src ? src.sourceLabel : "Linked", badge: src?.sourceType === "bank" ? "blue" : "accent", text: src?.description || p.remarks || "—" };
   };
 
-  function exportVendorSummary(withTransactions) {
+  async function exportVendorSummary(withTransactions, includePlannedExpenses = false) {
     const vendors = vendorGroups.map(g => ({
       vendor: g.vendor, contracted: g.contracted, paid: g.paid, deducted: g.deducted, due: g.due,
       projects: g.projects.map(p => ({
@@ -3474,10 +3474,24 @@ function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, supp
       })),
     }));
     const filterLabel = statusFilter === "open" ? "Open projects" : statusFilter === "all" ? "All projects" : `${statusMeta(statusFilter).label} projects`;
+    let plannedExpenses = null;
+    if (includePlannedExpenses) {
+      const plannedResult = await plannedDb.loadPlannedExpenses();
+      if (!plannedResult.ready) {
+        alert(`Could not load Planned Expenses for the combined PDF. ${plannedResult.error || "Check the planned_expenses table and Supabase permissions."}`);
+        return;
+      }
+      const items = (plannedResult.items || []).filter(x => x.status !== "Cancelled");
+      plannedExpenses = {
+        items,
+        total: items.reduce((sum, x) => sum + (+x.estimatedAmount || 0), 0),
+        committed: items.filter(x => ["Approved", "Committed"].includes(x.status)).reduce((sum, x) => sum + (+x.estimatedAmount || 0), 0),
+      };
+    }
     exportVendorSummaryPDF({
-      vendors, withTransactions,
+      vendors, withTransactions, plannedExpenses,
       subtitle: `${filterLabel}${search ? ` matching "${search}"` : ""} · ${vendors.length} vendor(s)`,
-      fileName: `vendor_summary${withTransactions ? "_with_transactions" : ""}.pdf`,
+      fileName: `vendor_summary${includePlannedExpenses ? "_combined_funding_forecast" : withTransactions ? "_with_transactions" : ""}.pdf`,
     });
     setSummaryOpen(false);
   }
@@ -3737,7 +3751,7 @@ function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, supp
 
       {summaryOpen && (
         <Modal title="Vendor Summary PDF" onClose={() => setSummaryOpen(false)}
-          foot={<><button className="btn btn-ghost" onClick={() => setSummaryOpen(false)}>Cancel</button><button className="btn btn-primary" onClick={() => exportVendorSummary(summaryWithTx)}>📄 Download PDF</button></>}>
+          foot={<><button className="btn btn-ghost" onClick={() => setSummaryOpen(false)}>Cancel</button><button className="btn btn-ghost" onClick={() => exportVendorSummary(summaryWithTx, true)}>📑 Download Combined PDF</button><button className="btn btn-primary" onClick={() => exportVendorSummary(summaryWithTx)}>📄 Vendor PDF Only</button></>}>
           <p style={{ fontSize: 12.5, color: "var(--text2)", lineHeight: 1.6, marginBottom: 12 }}>
             One line per vendor with <strong>Total</strong> (contract value), <strong>Paid</strong> and <strong>Left</strong>. Covers the {vendorGroups.length} vendor(s) matching your current search and status filter.
           </p>
@@ -3746,7 +3760,7 @@ function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, supp
             Include transactions (every project and payment under each vendor)
           </label>
           <p className="mono" style={{ fontSize: 11, color: "var(--text3)", marginTop: 10 }}>
-            {summaryWithTx ? "Page 1 is the summary; the transactions follow on the next pages." : "Summary only — a single page for most setups."}
+            {summaryWithTx ? "Page 1 is the vendor summary; transactions follow. The combined PDF adds Planned Expenses and a funding forecast at the end." : "Vendor PDF contains the summary only. The combined PDF also appends Planned Expenses and a funding forecast."}
           </p>
         </Modal>
       )}
