@@ -153,7 +153,7 @@ export function exportVendorSummaryPDF({ vendors, withTransactions = false, plan
       startY: y,
       head: [["Source", "What this includes", { content: "Amount", styles: { halign: "right" } }]],
       body: [
-        ["Vendor Projects", "Outstanding balance on recorded vendor projects", { content: money(summaryVendorBalance), styles: { halign: "right" } }],
+        ["Vendors", "Outstanding balance on recorded vendors", { content: money(summaryVendorBalance), styles: { halign: "right" } }],
         ["Planned Expenses", `${(plannedExpenses.items || []).length} active planned item(s); estimates may not yet be approved`, { content: money(summaryPlannedTotal), styles: { halign: "right" } }],
       ],
       foot: [[{ content: "TOTAL ESTIMATED FUNDING REQUIRED", colSpan: 2, styles: { fontStyle: "bold" } }, { content: money(summaryCombined), styles: { halign: "right", fontStyle: "bold" } }]],
