@@ -81,3 +81,12 @@ export async function deleteProjectPayment(id) {
   const { error } = await supabase.from('vendor_project_payments').delete().eq('id', id);
   if (error) throw error;
 }
+
+// Edit a manual / loan payment in place (amount, date, reference, remarks).
+export async function updateProjectPayment(id, data) {
+  const row = {
+    amount: +data.amount, pay_date: data.date || null,
+    reference: data.reference || null, remarks: data.remarks || null,
+  };
+  return mapPayment(await one(supabase.from('vendor_project_payments').update(row).eq('id', id).select().single()));
+}
