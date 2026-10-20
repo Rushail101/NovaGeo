@@ -247,6 +247,26 @@ export async function savePartnerCashbookEntry(data) {
   };
 }
 
+const mapCashbook = p => ({
+  id: p.id, partnerName: p.partner_name, entryDate: p.entry_date, accountType: p.account_type,
+  type: p.type, amount: +p.amount, paymentMode: p.payment_mode, bankTxnId: p.bank_txn_id, remarks: p.remarks || '',
+});
+
+// Edit a partner cashbook entry in place (partner, date, type, account, amount, channel, remarks).
+export async function updatePartnerCashbookEntry(id, data) {
+  const row = {
+    partner_name: data.partnerName, entry_date: data.entryDate, account_type: data.accountType || 'current',
+    type: data.type, amount: +data.amount, payment_mode: data.paymentMode || 'cash', remarks: data.remarks || null,
+  };
+  const p = await q1(supabase.from('partner_cashbook').update(row).eq('id', id).select().single());
+  return mapCashbook(p);
+}
+
+export async function deletePartnerCashbookEntry(id) {
+  const { error } = await supabase.from('partner_cashbook').delete().eq('id', id);
+  if (error) throw error;
+}
+
 // Atomically cross-posts an off-statement partner direct cash expenditure
 export async function recordPartnerDirectCashExpense(partnerName, date, category, amount, description, ref, isCapex = false, vendorName = '') {
   // The vendor is who actually got the cash. Falling back to ref/partner only
