@@ -3262,6 +3262,7 @@ function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, supp
   const [unShowAll, setUnShowAll] = useState(false);
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [summaryWithTx, setSummaryWithTx] = useState(false);
+  const [plannedFunding, setPlannedFunding] = useState({ total: 0, count: 0, ready: false, error: "" });
   const [deductFor, setDeductFor] = useState(null); // project to deduct a payment-to-someone-else from
   const [cashFor, setCashFor] = useState(null);       // project to record a partner cash payment against
   const [vendorEditItem, setVendorEditItem] = useState(null); // cash payment whose vendor is being corrected
@@ -3271,6 +3272,22 @@ function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, supp
   const set = k => v => setF(x => ({ ...x, [k]: v }));
 
   const ready = status?.ready !== false;
+  useEffect(() => {
+    let active = true;
+    plannedDb.loadPlannedExpenses().then(result => {
+      if (!active) return;
+      const items = (result.items || []).filter(item => item.status !== "Cancelled");
+      setPlannedFunding({
+        total: items.reduce((sum, item) => sum + (+item.estimatedAmount || 0), 0),
+        count: items.length,
+        ready: !!result.ready,
+        error: result.error || "",
+      });
+    }).catch(error => {
+      if (active) setPlannedFunding({ total: 0, count: 0, ready: false, error: error.message || String(error) });
+    });
+    return () => { active = false; };
+  }, []);
   const { items: poolItems, byKey: poolByKey } = usePaymentPool(bankTxns, bankLabels, expenses, capitalItems, projectPayments);
   const summarized = useMemo(() => summarizeProjects(projects, projectPayments), [projects, projectPayments]);
 
@@ -3537,6 +3554,24 @@ function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, supp
           <button className={`pill-tab ${tab === "unassigned" ? "active" : ""}`} onClick={() => setTab("unassigned")}>Unassigned Payments</button>
         </div>
         <button className="btn btn-primary" disabled={!ready} onClick={openAdd}>+ New Vendor Project</button>
+      </div>
+
+      <div className="config-card" style={{ marginBottom: 2, borderColor: "var(--border2)" }}>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+          <div>
+            <h3 style={{ margin: "0 0 5px", fontSize: 15 }}>Total Funding Overview</h3>
+            <p style={{ margin: 0, color: "var(--text3)", fontSize: 12 }}>Existing vendor project balances plus independent planned purchases. Estimates stay separate from actual accounting.</p>
+          </div>
+          <div style={{ textAlign: "right", minWidth: 190 }}>
+            <div style={{ color: "var(--text3)", fontSize: 10, fontWeight: 700, letterSpacing: ".06em" }}>TOTAL MONEY REQUIRED (EST.)</div>
+            <div className="mono" style={{ fontSize: 24, fontWeight: 800, marginTop: 4 }}>{fmt(totalDue + plannedFunding.total)}</div>
+          </div>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, marginTop: 14 }}>
+          <div style={{ background: "var(--bg3)", borderRadius: "var(--r)", padding: "10px 12px" }}><div style={{ color: "var(--text3)", fontSize: 11 }}>Vendor project balance</div><strong className="mono" style={{ display: "block", marginTop: 5 }}>{fmt(totalDue)}</strong></div>
+          <div style={{ background: "var(--bg3)", borderRadius: "var(--r)", padding: "10px 12px" }}><div style={{ color: "var(--text3)", fontSize: 11 }}>Planned future costs ({plannedFunding.count})</div><strong className="mono" style={{ display: "block", marginTop: 5 }}>{plannedFunding.ready ? fmt(plannedFunding.total) : "Not loaded"}</strong></div>
+        </div>
+        {!plannedFunding.ready && <p style={{ margin: "10px 0 0", color: "var(--amber)", fontSize: 11 }}>Planned expenses could not be loaded. Run the planned-expenses SQL migration and check Supabase access before relying on the combined total. {plannedFunding.error}</p>}
       </div>
 
       <div className="stats-grid">
