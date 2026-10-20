@@ -88,7 +88,7 @@ export function exportStatementPDF({ title, subtitle, summary = [], columns, row
 // vendors: [{ vendor, contracted, paid, due, projects: [{ projectNo, title, hasValue,
 //   contractValue, paid, due, payments: [{ date, source, particulars, amount }] }] }]
 // All money values are plain numbers; formatting happens here.
-export function exportVendorSummaryPDF({ vendors, withTransactions = false, subtitle = "", fileName }) {
+export function exportVendorSummaryPDF({ vendors, withTransactions = false, plannedExpenses = null, subtitle = "", fileName }) {
   const money = n =>
     "Rs. " + (+n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const doc = new jsPDF({ unit: "pt", format: "a4" });
@@ -204,6 +204,90 @@ export function exportVendorSummaryPDF({ vendors, withTransactions = false, subt
       columnStyles: { 0: { cellWidth: 62 }, 1: { cellWidth: 92 }, 3: { cellWidth: 86 } },
       margin: { left: 40, right: 40 },
     });
+  }
+
+  // 3) Optional combined funding forecast: keep estimates separate from actual vendor commitments.
+  if (plannedExpenses) {
+    doc.addPage();
+    let fy = 44;
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(14);
+    doc.text(COMPANY, 40, fy);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(120);
+    doc.text(TAGLINE, 40, fy + 14);
+    doc.text(new Date().toLocaleDateString("en-IN"), pageWidth - 40, fy, { align: "right" });
+    doc.setTextColor(0);
+    fy += 38;
+    doc.setDrawColor(210);
+    doc.line(40, fy, pageWidth - 40, fy);
+    fy += 24;
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(15);
+    doc.text("Combined Funding Forecast", 40, fy);
+    fy += 18;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(90);
+    doc.text("Existing vendor project balances plus independent planned purchases and future costs.", 40, fy);
+    doc.setTextColor(0);
+    fy += 28;
+
+    const plannedTotal = +plannedExpenses.total || 0;
+    const vendorBalance = +totals.due || 0;
+    const combinedRequired = vendorBalance + plannedTotal;
+    const cards = [
+      { label: "VENDOR PROJECT BALANCE", value: money(vendorBalance) },
+      { label: "PLANNED FUTURE COSTS", value: money(plannedTotal) },
+      { label: "COMBINED FUNDING INDICATION", value: money(combinedRequired) },
+    ];
+    const cardW = (pageWidth - 80 - 20) / 3;
+    cards.forEach((c, i) => {
+      const x = 40 + i * (cardW + 10);
+      doc.setDrawColor(220);
+      doc.roundedRect(x, fy, cardW, 48, 4, 4);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7);
+      doc.setTextColor(110);
+      doc.text(c.label, x + 8, fy + 13, { maxWidth: cardW - 16 });
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.setTextColor(25);
+      doc.text(c.value, x + 8, fy + 33, { maxWidth: cardW - 16 });
+    });
+    fy += 66;
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.text("Planned Expenses", 40, fy);
+    fy += 10;
+    const plannedRows = (plannedExpenses.items || []).map(x => [
+      rupeeSafe(x.itemName || "—"),
+      rupeeSafe(x.category || "Other"),
+      rupeeSafe(x.vendorName || "Not selected"),
+      rupeeSafe(x.expectedDate || "—"),
+      rupeeSafe(x.status || "Considering"),
+      money(x.estimatedAmount),
+    ]);
+    autoTable(doc, {
+      startY: fy,
+      head: [["Planned item", "Category", "Possible vendor", "Expected by", "Status", "Estimate"]],
+      body: plannedRows.length ? plannedRows : [[{ content: "No active planned expenses", colSpan: 6, styles: { halign: "center", textColor: 120 } }]],
+      foot: [[{ content: "TOTAL ACTIVE PLANNED COST", colSpan: 5, styles: { fontStyle: "bold" } }, { content: money(plannedTotal), styles: { halign: "right", fontStyle: "bold" } }]],
+      showFoot: "lastPage",
+      styles: { fontSize: 8, cellPadding: 5, overflow: "linebreak" },
+      headStyles: { fillColor: [25, 25, 25], textColor: 255 },
+      footStyles: { fillColor: [235, 235, 235], textColor: 20 },
+      alternateRowStyles: { fillColor: [247, 247, 247] },
+      columnStyles: { 0: { cellWidth: 125 }, 1: { cellWidth: 80 }, 2: { cellWidth: 90 }, 3: { cellWidth: 62 }, 4: { cellWidth: 65 }, 5: { halign: "right", cellWidth: 75 } },
+      margin: { left: 40, right: 40 },
+    });
+    const noteY = Math.min((doc.lastAutoTable?.finalY || fy) + 16, pageHeight - 48);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(100);
+    doc.text("Planning estimate only. Planned costs are not actual expenses or accounting liabilities. The combined figure is an indicative funding view and excludes any unrecorded costs, financing assumptions or adjustments.", 40, noteY, { maxWidth: pageWidth - 80 });
+    doc.setTextColor(0);
   }
 
   const pages = doc.getNumberOfPages();
