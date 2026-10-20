@@ -96,6 +96,83 @@ export function exportVendorSummaryPDF({ vendors, withTransactions = false, plan
   const pageHeight = doc.internal.pageSize.getHeight();
   let y = 40;
 
+  // Combined export starts with a dedicated one-page funding overview.
+  // Detailed vendor and planned-expense tables follow on subsequent pages.
+  if (plannedExpenses) {
+    const summaryVendorBalance = vendors.reduce((sum, vendor) => sum + (+vendor.due || 0), 0);
+    const summaryPlannedTotal = +plannedExpenses.total || 0;
+    const summaryCombined = summaryVendorBalance + summaryPlannedTotal;
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(15);
+    doc.text(COMPANY, 40, y);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(120);
+    doc.text(TAGLINE, 40, y + 14);
+    doc.text(new Date().toLocaleDateString("en-IN"), pageWidth - 40, y, { align: "right" });
+    doc.setTextColor(0);
+    y += 38;
+    doc.setDrawColor(210);
+    doc.line(40, y, pageWidth - 40, y);
+    y += 28;
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(18);
+    doc.text("Total Funding Overview", 40, y);
+    y += 18;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(100);
+    doc.text("Existing vendor project balances combined with planned purchases and future costs.", 40, y);
+    doc.setTextColor(0);
+    y += 28;
+    const summaryCards = [
+      { label: "VENDOR PROJECT BALANCE", value: money(summaryVendorBalance) },
+      { label: "PLANNED FUTURE COSTS", value: money(summaryPlannedTotal) },
+      { label: "TOTAL MONEY REQUIRED (EST.)", value: money(summaryCombined) },
+    ];
+    const summaryCardW = (pageWidth - 80 - 20) / 3;
+    summaryCards.forEach((card, index) => {
+      const x = 40 + index * (summaryCardW + 10);
+      doc.setDrawColor(215);
+      doc.roundedRect(x, y, summaryCardW, 62, 5, 5);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7);
+      doc.setTextColor(100);
+      doc.text(card.label, x + 9, y + 16, { maxWidth: summaryCardW - 18 });
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(index === 2 ? 11 : 10);
+      doc.setTextColor(20);
+      doc.text(card.value, x + 9, y + 42, { maxWidth: summaryCardW - 18 });
+    });
+    y += 86;
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.text("Funding breakdown", 40, y);
+    y += 8;
+    autoTable(doc, {
+      startY: y,
+      head: [["Source", "What this includes", { content: "Amount", styles: { halign: "right" } }]],
+      body: [
+        ["Vendor Projects", "Outstanding balance on recorded vendor projects", { content: money(summaryVendorBalance), styles: { halign: "right" } }],
+        ["Planned Expenses", `${(plannedExpenses.items || []).length} active planned item(s); estimates may not yet be approved`, { content: money(summaryPlannedTotal), styles: { halign: "right" } }],
+      ],
+      foot: [[{ content: "TOTAL ESTIMATED FUNDING REQUIRED", colSpan: 2, styles: { fontStyle: "bold" } }, { content: money(summaryCombined), styles: { halign: "right", fontStyle: "bold" } }]],
+      styles: { fontSize: 10, cellPadding: 9, overflow: "linebreak" },
+      headStyles: { fillColor: [25, 25, 25], textColor: 255 },
+      footStyles: { fillColor: [235, 235, 235], textColor: 20, fontStyle: "bold" },
+      columnStyles: { 0: { cellWidth: 112 }, 2: { cellWidth: 118, halign: "right" } },
+      margin: { left: 40, right: 40 },
+    });
+    const summaryNoteY = Math.min((doc.lastAutoTable?.finalY || y) + 22, pageHeight - 58);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(100);
+    doc.text("Planning view only. Planned expenses are not actual accounting entries. The combined total is the outstanding vendor-project balance plus active planned costs; it does not include amounts already paid or other unrecorded costs.", 40, summaryNoteY, { maxWidth: pageWidth - 80 });
+    doc.setTextColor(0);
+    doc.addPage();
+    y = 40;
+  }
+
   doc.setFont("helvetica", "bold");
   doc.setFontSize(14);
   doc.text(COMPANY, 40, y);
