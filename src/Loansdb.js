@@ -49,3 +49,16 @@ export async function deleteLoanEntry(id) {
   const { error } = await supabase.from('loan_entries').delete().eq('id', id);
   if (error) throw error;
 }
+
+export async function updateLoanEntry(id, d) {
+  const row = {
+    entry_date: d.date, lender: (d.lender || '').trim(), amount: +d.amount,
+    vendor_name: (d.vendorName || '').trim() || null,
+    project_id: d.projectId != null ? String(d.projectId) : null,
+    project_payment_id: d.projectPaymentId != null ? String(d.projectPaymentId) : null,
+    note: (d.note || '').trim() || null,
+  };
+  const { data, error } = await supabase.from('loan_entries').update(row).eq('id', id).select().single();
+  if (error) throw error;
+  return mapEntry(data);
+}
