@@ -2,8 +2,9 @@ import React, { useState, useMemo, useEffect, useSyncExternalStore } from "react
 import * as XLSX from "xlsx";
 import * as db from "./db.js";
 import * as vpdb from "./vendorProjectsDb.js";
+import * as plannedDb from "./plannedExpensesDb.js";
 import { supabase } from "./supabase.js";
-import { exportStatementPDF, exportVendorSummaryPDF } from "./pdfExport.js";
+import { exportStatementPDF, exportVendorSummaryPDF, exportPlannedExpensesPDF } from "./pdfExport.js";
 
 // ── Loans database layer (inlined so the app builds without a separate file) ──
 
@@ -609,6 +610,7 @@ async function parsePdfStatement(file) {
 const NAV = [
   { id:"dashboard", label:"Dashboard", icon:"◈", group:null },
   { id:"vendorprojects", label:"Vendor Projects", icon:"🛠", group:"Commercial" },
+  { id:"plannedexpenses", label:"Planned Expenses", icon:"🧮", group:"Commercial" },
   { id:"purchases", label:"Purchases", icon:"📥", group:"Commercial" },
   { id:"opscosts", label:"Monthly Overheads", icon:"🧾", group:"Commercial" },
   { id:"capital", label:"Capital & Infra", icon:"🏗", group:"Commercial" },
@@ -747,7 +749,6 @@ export default function App() {
   const [loanEntries, setLoanEntries] = useState([]);
   const [loanStatus, setLoanStatus] = useState({ ready: true, error: "" });
   const [projectPayments, setProjectPayments] = useState([]);
-  const [projectEstimates, setProjectEstimates] = useState([]);
   const [vpStatus, setVpStatus] = useState({ ready: true, error: "" });
 
   useEffect(() => {
@@ -766,8 +767,8 @@ export default function App() {
       // vendor-projects tables haven't been created yet.
       try {
         const v = await vpdb.loadVendorProjects();
-        setVendorProjects(v.projects); setProjectPayments(v.payments); setProjectEstimates(v.estimates || []);
-        setVpStatus({ ready: v.ready, error: v.error, estimatesReady: v.estimatesReady, estimatesError: v.estimatesError });
+        setVendorProjects(v.projects); setProjectPayments(v.payments);
+        setVpStatus({ ready: v.ready, error: v.error });
       } catch (err) {
         setVpStatus({ ready: false, error: err.message || String(err) });
       }
@@ -841,12 +842,12 @@ export default function App() {
 
           <div className="content">
             {view === "dashboard" && <DashboardView {...{ expenses, purchases, capitalItems, bankTxns, partnerCashbook, vendorProjects, projectPayments, goTo }} />}
+            {view === "plannedexpenses" && <PlannedExpensesView />}
             {view === "vendorprojects" && (
               <VendorProjectsView
                 bankTxns={bankTxns} bankLabels={bankLabels} expenses={expenses} capitalItems={capitalItems} suppliers={suppliers}
                 projects={vendorProjects} setProjects={setVendorProjects}
                 projectPayments={projectPayments} setProjectPayments={setProjectPayments}
-                projectEstimates={projectEstimates} setProjectEstimates={setProjectEstimates}
                 partnerCashbook={partnerCashbook} setPartnerCashbook={setPartnerCashbook}
                 setExpenses={setExpenses} setCapitalItems={setCapitalItems}
                 status={vpStatus}
@@ -875,6 +876,86 @@ export default function App() {
       </div>
     </>
   );
+}
+
+// ── PLANNED EXPENSES: independent future-cost planner, not linked to vendors/projects ──
+function PlannedExpensesView() {
+  const blank = { itemName:"", category:"Equipment", estimatedAmount:"", vendorName:"", expectedDate:"", status:"Considering", priority:"Normal", notes:"" };
+  const [items, setItems] = useState([]);
+  const [ready, setReady] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [form, setForm] = useState(blank);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("All");
+  const set = k => e => setForm(old => ({ ...old, [k]: e.target.value }));
+
+  useEffect(() => {
+    let active = true;
+    plannedDb.loadPlannedExpenses().then(r => {
+      if (!active) return;
+      setItems(r.items || []); setReady(r.ready); setLoadError(r.error || "");
+    }).catch(e => { if (active) { setReady(false); setLoadError(e.message || String(e)); } });
+    return () => { active = false; };
+  }, []);
+
+  const money = n => fmt(+n || 0);
+  const activeItems = items.filter(x => x.status !== "Cancelled");
+  const total = activeItems.reduce((sum, x) => sum + (+x.estimatedAmount || 0), 0);
+  const committed = activeItems.filter(x => ["Approved", "Committed"].includes(x.status)).reduce((sum, x) => sum + (+x.estimatedAmount || 0), 0);
+  const filtered = items.filter(x => (statusFilter === "All" || x.status === statusFilter) && (!search || [x.itemName,x.category,x.vendorName,x.notes,x.status].some(v => String(v || "").toLowerCase().includes(search.toLowerCase()))));
+
+  function openAdd() { setEditingId(null); setForm(blank); setModalOpen(true); }
+  function openEdit(x) { setEditingId(x.id); setForm({ itemName:x.itemName || "", category:x.category || "Other", estimatedAmount:String(x.estimatedAmount ?? ""), vendorName:x.vendorName || "", expectedDate:x.expectedDate || "", status:x.status || "Considering", priority:x.priority || "Normal", notes:x.notes || "" }); setModalOpen(true); }
+  async function save() {
+    if (!form.itemName.trim() || !(+form.estimatedAmount > 0)) return alert("Please enter an item / expense name and an estimated amount greater than zero.");
+    setBusy(true);
+    try {
+      const saved = await plannedDb.savePlannedExpense(form, editingId);
+      setItems(old => editingId ? old.map(x => x.id === editingId ? saved : x) : [saved, ...old]);
+      setModalOpen(false); setForm(blank); setEditingId(null);
+    } catch (e) { alert(`Could not save planned expense: ${e.message || e}`); }
+    finally { setBusy(false); }
+  }
+  async function remove(x) {
+    if (!confirm(`Delete planned item “${x.itemName}”?`)) return;
+    try { await plannedDb.deletePlannedExpense(x.id); setItems(old => old.filter(y => y.id !== x.id)); }
+    catch (e) { alert(`Could not delete item: ${e.message || e}`); }
+  }
+  function exportPdf() {
+    exportPlannedExpensesPDF({ items: activeItems, total, committed, fileName: "nova_geo_planned_expenses.pdf" });
+  }
+
+  return <div style={{display:"flex", flexDirection:"column", gap:16}}>
+    <div style={{display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:14, flexWrap:"wrap", marginBottom:4}}><div><h3 style={{fontSize:16, marginBottom:6}}>Planned Expenses</h3><p style={{color:"var(--text3)", fontSize:12, maxWidth:720}}>Plan future purchases, equipment and projects before choosing a vendor or receiving a quotation. These entries stay separate from actual accounting.</p></div><div style={{display:"flex", gap:8, flexWrap:"wrap"}}><button className="btn btn-ghost" onClick={exportPdf} disabled={!activeItems.length}>📄 Export PDF</button><button className="btn btn-primary" onClick={openAdd}>＋ Add Planned Expense</button></div></div>
+    {!ready && <div className="config-card" style={{ borderColor:"var(--amber)" }}><h3 style={{ color:"var(--amber)" }}>Planned Expenses database setup needed</h3><p>{loadError || "Run the planned expenses SQL migration in Supabase, then refresh this page."}</p><p className="muted">This section uses its own table and does not modify vendor projects or actual expense records.</p></div>}
+    <div className="stats-grid">
+      <StatCard label="Total Planned Funding" value={money(total)} sub={`${activeItems.length} active planned item(s)`} color="blue" />
+      <StatCard label="Approved / Committed" value={money(committed)} sub="Items you have decided to proceed with" color="green" />
+      <StatCard label="Still Considering" value={money(activeItems.filter(x => x.status === "Considering").reduce((s,x)=>s+(+x.estimatedAmount||0),0))} sub="Not yet decided" color="amber" />
+    </div>
+    <div className="table-wrap">
+      <div className="table-toolbar"><h3>Future cost register</h3><div className="filter-bar" style={{marginBottom:0}}><input placeholder="Search item, category, possible vendor…" value={search} onChange={e=>setSearch(e.target.value)} style={{ minWidth:220, padding:"8px 10px", background:"var(--bg3)", color:"var(--text)", border:"1px solid var(--border2)", borderRadius:"var(--r)" }} /><select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)} style={{ maxWidth:190, padding:"8px 10px", background:"var(--bg3)", color:"var(--text)", border:"1px solid var(--border2)", borderRadius:"var(--r)" }}><option>All</option>{["Considering","Approved","Committed","Purchased","Cancelled"].map(x=><option key={x}>{x}</option>)}</select></div></div><table><thead><tr><th>Item / Future expense</th><th>Category</th><th>Possible vendor</th><th>Expected by</th><th>Status</th><th className="r">Estimate</th><th>Actions</th></tr></thead><tbody>
+        {filtered.length === 0 ? <tr><td colSpan={7}><EmptyState icon="🧮" message="No planned expenses yet" sub="Add equipment, construction, infrastructure or other future costs here." /></td></tr> : filtered.map(x=><tr key={x.id}><td><strong>{x.itemName}</strong>{x.notes && <div style={{color:"var(--text3)",fontSize:11,maxWidth:260,whiteSpace:"normal"}}>{x.notes}</div>}</td><td>{x.category}</td><td>{x.vendorName || <span style={{color:"var(--text3)"}}>Not selected</span>}</td><td className="mono">{x.expectedDate || "—"}</td><td><BadgeComponent type={x.status === "Committed" || x.status === "Approved" ? "green" : x.status === "Cancelled" ? "muted" : "accent"}>{x.status}</BadgeComponent></td><td className="r mono" style={{fontWeight:700}}>{money(x.estimatedAmount)}</td><td><div style={{display:"flex",gap:5}}><button className="btn btn-ghost btn-sm" onClick={()=>openEdit(x)}>Edit</button><button className="btn btn-ghost btn-sm" onClick={()=>remove(x)}>Delete</button></div></td></tr>)}
+      </tbody></table>
+      <div style={{padding:"10px 14px", color:"var(--text3)", fontSize:11}}>Cancelled items are excluded from the forecast and PDF. “Purchased” items remain in this planning history but should be entered separately into actual books when the real transaction occurs.</div>
+    </div>
+    {modalOpen && <Modal title={editingId ? "Edit Planned Expense" : "Add Planned Expense"} onClose={()=>setModalOpen(false)} size="modal-lg" foot={<><button className="btn btn-ghost" onClick={()=>setModalOpen(false)}>Cancel</button><button className="btn btn-primary" disabled={busy} onClick={save}>{busy ? "Saving…" : "Save Planned Expense"}</button></>}>
+      <div>
+        <div className="form-row cols-2"><FG label="Item / expense name" note="e.g. New crusher machine, land development, electrical installation" ><input value={form.itemName} onChange={set("itemName")} placeholder="What might you need to buy or build?" /></FG>
+        <FG label="Type / category"><select value={form.category} onChange={set("category")}>{["Equipment","Machinery","Construction","Land / Site Development","Electrical","Infrastructure","Transport","Professional Fees","Working Capital","Other"].map(x=><option key={x}>{x}</option>)}</select></FG></div>
+        <div className="form-row cols-2"><FG label="Approximate cost (₹)"><input type="number" min="0" step="0.01" value={form.estimatedAmount} onChange={set("estimatedAmount")} placeholder="0.00" /></FG>
+        <FG label="Possible vendor (optional)" note="Leave blank if you haven't selected one"><input className="input" value={form.vendorName} onChange={set("vendorName")} placeholder="Unknown / vendor under consideration" /></FG></div>
+        <div className="form-row cols-3"><FG label="Expected purchase date (optional)"><input type="date" value={form.expectedDate} onChange={set("expectedDate")} /></FG>
+        <FG label="Decision status"><select value={form.status} onChange={set("status")}>{["Considering","Approved","Committed","Purchased","Cancelled"].map(x=><option key={x}>{x}</option>)}</select></FG>
+        <FG label="Priority"><select value={form.priority} onChange={set("priority")}>{["Low","Normal","High","Critical"].map(x=><option key={x}>{x}</option>)}</select></FG></div>
+        <div className="form-row"><FG label="Notes / assumptions"><textarea rows={3} value={form.notes} onChange={set("notes")} placeholder="Approximate quote basis, taxes, installation, freight, why it's needed…" /></FG></div>
+      </div>
+      <p style={{color:"var(--text3)",fontSize:11, marginTop:12}}>This is a planning estimate only. It does not create a vendor, vendor project, purchase, payment or accounting entry.</p>
+    </Modal>}
+  </div>;
 }
 
 // ── COMMERCIAL & REPORTING VIEWS ──────────────────────────────────────────────
@@ -3065,19 +3146,6 @@ const PROJECT_STATUSES = [
   { id: "completed", label: "Completed", badge: "green" },
   { id: "cancelled", label: "Cancelled", badge: "muted" },
 ];
-const ESTIMATE_STATUSES = [
-  { id: "considering", label: "Considering", badge: "purple" },
-  { id: "approved", label: "Approved", badge: "blue" },
-  { id: "committed", label: "Committed", badge: "amber" },
-  { id: "cancelled", label: "Cancelled", badge: "muted" },
-];
-const ESTIMATE_CATS = [
-  { id: "civil", label: "Civil work" }, { id: "electrical", label: "Electrical" },
-  { id: "machinery", label: "Machinery" }, { id: "labour", label: "Labour" },
-  { id: "transport", label: "Transport & installation" }, { id: "materials", label: "Materials" },
-  { id: "fees", label: "Fees / approvals" }, { id: "other", label: "Other" },
-];
-const estimateCatLabel = id => (ESTIMATE_CATS.find(c => c.id === id) || {}).label || id;
 const PROJECT_CATS = [
   ...EXP_CATS,
   ...CAP_CATS.map(c => ({ id: c.id, label: `Capital — ${c.label}` })),
@@ -3179,7 +3247,7 @@ function paymentSourceKey(p) {
   return null;
 }
 
-function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, suppliers, projects, setProjects, projectPayments, setProjectPayments, projectEstimates, setProjectEstimates, partnerCashbook, setPartnerCashbook, setExpenses, setCapitalItems, status }) {
+function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, suppliers, projects, setProjects, projectPayments, setProjectPayments, partnerCashbook, setPartnerCashbook, setExpenses, setCapitalItems, status }) {
   const [tab, setTab] = useState("projects");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("open"); // open | all | <status id>
@@ -3197,10 +3265,6 @@ function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, supp
   const [deductFor, setDeductFor] = useState(null); // project to deduct a payment-to-someone-else from
   const [cashFor, setCashFor] = useState(null);       // project to record a partner cash payment against
   const [vendorEditItem, setVendorEditItem] = useState(null); // cash payment whose vendor is being corrected
-  const [estimateFor, setEstimateFor] = useState(null);
-  const [estimateEditing, setEstimateEditing] = useState(null);
-  const [estimateFormOpen, setEstimateFormOpen] = useState(false);
-  const [includeEstimatesPDF, setIncludeEstimatesPDF] = useState(true);
 
   const blank = { vendorName: "", title: "", category: "misc", status: "active", contractValue: "", startDate: "", endDate: "", description: "", notes: "" };
   const [f, setF] = useState(blank);
@@ -3209,9 +3273,6 @@ function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, supp
   const ready = status?.ready !== false;
   const { items: poolItems, byKey: poolByKey } = usePaymentPool(bankTxns, bankLabels, expenses, capitalItems, projectPayments);
   const summarized = useMemo(() => summarizeProjects(projects, projectPayments), [projects, projectPayments]);
-  const estimatesByProject = useMemo(() => { const m = {}; (projectEstimates || []).forEach(e => { (m[e.projectId] = m[e.projectId] || []).push(e); }); return m; }, [projectEstimates]);
-  const estimatesFor = projectId => (estimatesByProject[projectId] || []).filter(e => e.status !== "cancelled");
-  const estimateTotal = (projectId, treatment = "additional") => estimatesFor(projectId).filter(e => e.treatment === treatment).reduce((sum, e) => sum + (+e.amount || 0), 0);
 
   const vendorNames = useMemo(() => {
     const m = {};
@@ -3225,24 +3286,6 @@ function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, supp
   const projectVendorKeys = useMemo(() => new Set((projects || []).map(p => normVendor(p.vendorName))), [projects]);
 
   function openAdd() { setEditingId(null); setF(blank); setFormOpen(true); }
-  const blankEstimate = { description: "", category: "other", amount: "", status: "considering", treatment: "additional", expectedDate: "", notes: "" };
-  const [estimateForm, setEstimateForm] = useState(blankEstimate);
-  function openEstimateAdd(project) { setEstimateFor(project); setEstimateEditing(null); setEstimateForm(blankEstimate); setEstimateFormOpen(true); }
-  function openEstimateEdit(project, estimate) { setEstimateFor(project); setEstimateEditing(estimate.id); setEstimateForm({ description: estimate.description, category: estimate.category, amount: String(estimate.amount), status: estimate.status, treatment: estimate.treatment, expectedDate: estimate.expectedDate || "", notes: estimate.notes || "" }); setEstimateFormOpen(true); }
-  async function saveEstimate() {
-    if (!estimateFor || !estimateForm.description.trim()) return alert("Enter an estimate description.");
-    if (!(+estimateForm.amount > 0)) return alert("Enter an estimated amount greater than zero.");
-    try {
-      const row = await vpdb.saveProjectEstimate({ ...estimateForm, projectId: estimateFor.id }, estimateEditing);
-      setProjectEstimates(old => estimateEditing ? old.map(x => x.id === estimateEditing ? row : x) : [row, ...old]);
-      setEstimateFormOpen(false); setEstimateEditing(null);
-    } catch (err) { alert(err.message || String(err)); }
-  }
-  async function removeEstimate(estimate) {
-    if (!confirm(`Delete estimate "${estimate.description}" (${fmt(estimate.amount)})?`)) return;
-    try { await vpdb.deleteProjectEstimate(estimate.id); setProjectEstimates(old => old.filter(x => x.id !== estimate.id)); }
-    catch (err) { alert(err.message || String(err)); }
-  }
   function openEdit(p) {
     setEditingId(p.id);
     setF({
@@ -3424,8 +3467,6 @@ function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, supp
       vendor: g.vendor, contracted: g.contracted, paid: g.paid, deducted: g.deducted, due: g.due,
       projects: g.projects.map(p => ({
         projectNo: p.projectNo, title: p.title, hasValue: p.hasValue, contractValue: p.contractValue, paid: p.paid, deducted: p.deducted, due: p.due,
-        estimates: estimatesFor(p.id).map(e => ({ description: e.description, category: estimateCatLabel(e.category), amount: e.amount, status: (ESTIMATE_STATUSES.find(st => st.id === e.status) || {}).label || e.status, treatment: e.treatment === "included" ? "In contract" : "Additional", expectedDate: e.expectedDate, notes: e.notes })),
-        estimateAdditional: estimateTotal(p.id, "additional"), estimateIncluded: estimateTotal(p.id, "included"),
         payments: p.payments.slice().sort((a, b) => (a.date || "").localeCompare(b.date || "")).map(x => {
           const info = paymentRowInfo(x);
           return { date: x.date, source: info.kind, particulars: info.text, amount: x.amount };
@@ -3434,7 +3475,7 @@ function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, supp
     }));
     const filterLabel = statusFilter === "open" ? "Open projects" : statusFilter === "all" ? "All projects" : `${statusMeta(statusFilter).label} projects`;
     exportVendorSummaryPDF({
-      vendors, withTransactions, includeEstimates: includeEstimatesPDF,
+      vendors, withTransactions,
       subtitle: `${filterLabel}${search ? ` matching "${search}"` : ""} · ${vendors.length} vendor(s)`,
       fileName: `vendor_summary${withTransactions ? "_with_transactions" : ""}.pdf`,
     });
@@ -3445,8 +3486,6 @@ function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, supp
     exportStatementPDF({
       title: `Vendor Project Statement: ${p.projectNo}`,
       subtitle: `${p.vendorName} — ${p.title}${p.description ? ` (${p.description})` : ""}`,
-      estimates: estimatesFor(p.id).map(e => ({ description: e.description, category: estimateCatLabel(e.category), amount: e.amount, status: (ESTIMATE_STATUSES.find(st => st.id === e.status) || {}).label || e.status, treatment: e.treatment === "included" ? "In contract" : "Additional", expectedDate: e.expectedDate, notes: e.notes })),
-      forecast: { additional: estimateTotal(p.id, "additional"), included: estimateTotal(p.id, "included"), paid: p.paid, deducted: p.deducted, due: p.due, contractValue: p.contractValue, hasValue: p.hasValue },
       summary: [
         { label: p.hasValue ? "Contract Value" : "Contract Value", value: p.hasValue ? fmt(p.contractValue) : "Open-ended", color: [90, 160, 220] },
         { label: "Paid", value: fmt(p.paid), color: [70, 180, 100] },
@@ -3558,12 +3597,8 @@ function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, supp
                             </div>
                           )}
 
-                          {(() => { const est = estimatesFor(p.id); const extra = est.filter(x => x.treatment === "additional").reduce((sum, x) => sum + x.amount, 0); const included = est.filter(x => x.treatment === "included").reduce((sum, x) => sum + x.amount, 0); return (est.length > 0 || (status?.estimatesReady === false)) ? <div style={{ marginTop: 12, padding: 10, borderRadius: "var(--r)", background: "var(--bg3)", display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center", fontSize: 12 }}> <span style={{ color: "var(--text3)" }}>ESTIMATES ({est.length})</span><span>Additional: <strong style={{ color: "var(--purple, #b39af7)" }}>{fmt(extra)}</strong></span><span>Already in contract: <strong>{fmt(included)}</strong></span><span>Projected total: <strong>{fmt(p.paid + p.deducted + p.due + extra)}</strong></span></div> : null; })()}
-
                           <div style={{ marginTop: 10, display: "flex", justifyContent: "flex-end", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
                             <button className="btn btn-primary btn-sm" disabled={!ready} onClick={() => setLinkFor(p)}>🔗 Link Payment</button>
-                            <button className="btn btn-ghost btn-sm" disabled={!ready || status?.estimatesReady === false} onClick={() => openEstimateAdd(p)}>＋ Add Estimate</button>
-                            <button className="btn btn-ghost btn-sm" disabled={status?.estimatesReady === false} onClick={() => { setEstimateFor(p); setEstimateEditing(null); }}>Estimates ({(estimatesByProject[p.id] || []).length})</button>
                             <button className="btn btn-ghost btn-sm" disabled={!ready} onClick={() => setCashFor(p)}>💵 Partner Cash</button>
                             <button className="btn btn-ghost btn-sm" disabled={!ready} onClick={() => setManualFor(p)}>+ Manual Payment</button>
                             <button className="btn btn-ghost btn-sm" disabled={!ready} onClick={() => setDeductFor(p)}>➖ Deduct Payment to Others</button>
@@ -3651,39 +3686,6 @@ function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, supp
         </div>
       )}
 
-      {status?.estimatesReady === false && ready && (
-        <div className="config-card" style={{ marginBottom: 14, borderColor: "var(--amber)" }}>
-          <h3 style={{ color: "var(--amber)" }}>One-time setup: Project Estimates</h3>
-          <p style={{ fontSize: 12.5, color: "var(--text2)", lineHeight: 1.6 }}>Run <span className="mono">supabase/vendor_project_estimates.sql</span> in the Supabase SQL Editor, then reload. Existing projects, payments and accounting remain available while estimates are not yet set up.</p>
-          {status?.estimatesError && <p className="mono" style={{ fontSize: 11, color: "var(--text3)" }}>{status.estimatesError}</p>}
-        </div>
-      )}
-
-      {estimateFor && !estimateFormOpen && (
-        <Modal title={`Estimates: ${estimateFor.projectNo} — ${estimateFor.title}`} size="modal-lg" onClose={() => setEstimateFor(null)} foot={<button className="btn btn-primary" disabled={status?.estimatesReady === false} onClick={() => { setEstimateEditing(null); setEstimateForm(blankEstimate); setEstimateFormOpen(true); }}>＋ Add Estimate</button>}>
-          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 14, fontSize: 12 }}>
-            <span>Additional estimates: <strong>{fmt(estimateTotal(estimateFor.id, "additional"))}</strong></span>
-            <span>Already in contract: <strong>{fmt(estimateTotal(estimateFor.id, "included"))}</strong></span>
-            <span>Projected total outflow: <strong>{fmt((summarized.find(x => x.id === estimateFor.id)?.paid || 0) + (summarized.find(x => x.id === estimateFor.id)?.deducted || 0) + (summarized.find(x => x.id === estimateFor.id)?.due || 0) + estimateTotal(estimateFor.id, "additional"))}</strong></span>
-          </div>
-          <div className="table-wrap"><table><thead><tr><th>Expense / estimate</th><th>Category</th><th>Status</th><th>Contract treatment</th><th className="r">Amount</th><th>Actions</th></tr></thead><tbody>
-            {(estimatesByProject[estimateFor.id] || []).length === 0 ? <tr><td colSpan={6} style={{ textAlign: "center", color: "var(--text3)", padding: 20 }}>No estimates yet. Add possible future costs here.</td></tr> : (estimatesByProject[estimateFor.id] || []).map(e => { const sm = ESTIMATE_STATUSES.find(x => x.id === e.status) || ESTIMATE_STATUSES[0]; return <tr key={e.id}><td><strong>{e.description}</strong>{e.expectedDate && <div style={{ fontSize: 11, color: "var(--text3)" }}>Expected: {e.expectedDate}</div>}{e.notes && <div style={{ fontSize: 11, color: "var(--text3)" }}>{e.notes}</div>}</td><td>{estimateCatLabel(e.category)}</td><td><BadgeComponent type={sm.badge}>{sm.label}</BadgeComponent></td><td>{e.treatment === "included" ? "In contract" : "Additional"}</td><td className="r mono">{fmt(e.amount)}</td><td style={{ whiteSpace: "nowrap" }}><button className="btn btn-ghost btn-sm" onClick={() => openEstimateEdit(estimateFor, e)}>Edit</button> <button className="btn btn-danger btn-sm" onClick={() => removeEstimate(e)}>Delete</button></td></tr>; })}
-          </tbody></table></div>
-          <p style={{ fontSize: 11, color: "var(--text3)", marginTop: 12 }}>Estimates are planning records only. They do not affect expenses, bank transactions, the balance sheet or profit and loss.</p>
-        </Modal>
-      )}
-
-      {estimateFormOpen && (
-        <Modal title={estimateEditing ? "Edit Estimate" : `Add Estimate — ${estimateFor?.title || "Project"}`} onClose={() => { setEstimateFormOpen(false); setEstimateEditing(null); }} foot={<><button className="btn btn-ghost" onClick={() => { setEstimateFormOpen(false); setEstimateEditing(null); }}>Cancel</button><button className="btn btn-primary" onClick={saveEstimate}>Save Estimate</button></>}>
-          <div className="form-row"><FG label="Expense description *"><input value={estimateForm.description} onChange={e => setEstimateForm(x => ({ ...x, description: e.target.value }))} placeholder="e.g. Electrical work, transformer, transport" /></FG></div>
-          <div className="form-row cols-2"><FG label="Category"><select value={estimateForm.category} onChange={e => setEstimateForm(x => ({ ...x, category: e.target.value }))}>{ESTIMATE_CATS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</select></FG><FG label="Estimated amount (₹) *"><input type="number" min="0.01" step="0.01" value={estimateForm.amount} onChange={e => setEstimateForm(x => ({ ...x, amount: e.target.value }))} placeholder="0.00" /></FG></div>
-          <div className="form-row cols-2"><FG label="Decision status"><select value={estimateForm.status} onChange={e => setEstimateForm(x => ({ ...x, status: e.target.value }))}>{ESTIMATE_STATUSES.map(st => <option key={st.id} value={st.id}>{st.label}</option>)}</select></FG><FG label="Cost treatment"><select value={estimateForm.treatment} onChange={e => setEstimateForm(x => ({ ...x, treatment: e.target.value }))}><option value="additional">Additional to contract</option><option value="included">Already included in contract</option></select></FG></div>
-          <div className="form-row"><FG label="Expected date (optional)"><input type="date" value={estimateForm.expectedDate} onChange={e => setEstimateForm(x => ({ ...x, expectedDate: e.target.value }))} /></FG></div>
-          <div className="form-row"><FG label="Notes (optional)"><textarea value={estimateForm.notes} onChange={e => setEstimateForm(x => ({ ...x, notes: e.target.value }))} rows={3} placeholder="Quotation, assumptions, vendor details…" /></FG></div>
-          <p style={{ fontSize: 11, color: "var(--text3)" }}>Saving an estimate never creates an actual expense or payment.</p>
-        </Modal>
-      )}
-
       {formOpen && (
         <Modal title={editingId ? "Edit Vendor Project" : "New Vendor Project"} onClose={() => { setFormOpen(false); setEditingId(null); }}
           foot={<><button className="btn btn-ghost" onClick={() => { setFormOpen(false); setEditingId(null); }}>Cancel</button><button className="btn btn-primary" onClick={saveProject}>{editingId ? "Save Changes" : "Create Project"}</button></>}>
@@ -3742,9 +3744,6 @@ function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, supp
           <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--text)" }}>
             <input type="checkbox" checked={summaryWithTx} onChange={e => setSummaryWithTx(e.target.checked)} />
             Include transactions (every project and payment under each vendor)
-          </label>
-          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--text)", marginTop: 12 }}>
-            <input type="checkbox" checked={includeEstimatesPDF} onChange={e => setIncludeEstimatesPDF(e.target.checked)} /> Include project estimates and forecast totals in PDF
           </label>
           <p className="mono" style={{ fontSize: 11, color: "var(--text3)", marginTop: 10 }}>
             {summaryWithTx ? "Page 1 is the summary; the transactions follow on the next pages." : "Summary only — a single page for most setups."}
