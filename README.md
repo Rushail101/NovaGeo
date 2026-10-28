@@ -33,3 +33,15 @@ npm install
 npm run dev      # needs VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY
 npm run build
 ```
+
+
+## Purchase Orders (new)
+The Purchase Orders screen creates supplier POs as PDF files, with vendor and billing details,
+multiple line items, GST calculations, advance/balance summaries, PO history, duplicate and
+cancel actions. It is separate from the existing Purchases register so it does not change current
+expense or balance-sheet records.
+
+### One-time setup
+Open the Purchase Orders tab in the app, copy the displayed SQL, and run it in the Supabase SQL
+Editor. Refresh the app afterward. The SQL creates `purchase_orders` and the `next_nova_geo_po_number()`
+database function. Number format: `NGR/PO/YYYY-YY/001`, with a financial-year sequence.

@@ -3,6 +3,7 @@ import * as XLSX from "xlsx";
 import * as db from "./db.js";
 import * as vpdb from "./vendorProjectsDb.js";
 import * as plannedDb from "./plannedExpensesDb.js";
+import PurchaseOrdersView from "./PurchaseOrders.jsx";
 import { supabase } from "./supabase.js";
 import { exportStatementPDF, exportVendorSummaryPDF, exportPlannedExpensesPDF } from "./pdfExport.js";
 
@@ -612,6 +613,7 @@ const NAV = [
   { id:"vendorprojects", label:"Vendor Projects", icon:"🛠", group:"Commercial" },
   { id:"plannedexpenses", label:"Planned Expenses", icon:"🧮", group:"Commercial" },
   { id:"purchases", label:"Purchases", icon:"📥", group:"Commercial" },
+  { id:"purchaseorders", label:"Purchase Orders", icon:"📄", group:"Commercial" },
   { id:"opscosts", label:"Monthly Overheads", icon:"🧾", group:"Commercial" },
   { id:"capital", label:"Capital & Infra", icon:"🏗", group:"Commercial" },
   { id:"bankstatement", label:"Bank Statement", icon:"🏦", group:"Banking" },
@@ -854,6 +856,7 @@ export default function App() {
               />
             )}
             {view === "purchases" && <PurchasesView {...{ suppliers, purchases, setPurchases }} />}
+            {view === "purchaseorders" && <PurchaseOrdersView />}
             {view === "opscosts" && <MonthlyOpsCostsView {...{ expenses, setExpenses }} />}
             {view === "capital" && <CapitalRegisterView {...{ bankTxns, bankLabels, capitalItems, capitalProjects, setCapitalProjects }} />}
             {view === "bankstatement" && <BankStatementGroupingView {...{ bankBatches, setBankBatches, bankTxns, setBankTxns, bankLabels, setBankLabels, capitalItems, setCapitalItems, setExpenses, setPartnerCashbook }} />}
