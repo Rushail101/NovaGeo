@@ -45,3 +45,6 @@ expense or balance-sheet records.
 Open the Purchase Orders tab in the app, copy the displayed SQL, and run it in the Supabase SQL
 Editor. Refresh the app afterward. The SQL creates `purchase_orders` and the `next_nova_geo_po_number()`
 database function. Number format: `NGR/PO/YYYY-YY/001`, with a financial-year sequence.
+
+### PO PDF appearance and advance
+The PO PDF follows the supplied Nova Geo template: navy header and divider, pale-blue metadata/table headings and delivery band, bordered vendor/buyer columns, payment summary, terms, and authorised-signatory area. The "Less: Advance Paid (optional)" field may be left blank when no advance has been paid; the PDF calculates the balance payable from the order total minus the entered advance. Advance cannot be negative or exceed the PO total.

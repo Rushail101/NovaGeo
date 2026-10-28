@@ -64,8 +64,8 @@ const blank = () => ({
   bill_to_gstin:"36AAYFN2455Q1Z8", bill_to_contact:"Mr. Archit Saraf, +91 99992 36393",
   delivery_address:"Nova Geo Resources LLP, Survey No. 226/1/2, Peddapur (V), Veldanda (M), Nagarkurnool District, Telangana - 509360",
   subject:"", intro_text:"Dear Sir/Madam, with reference to the above-mentioned Proforma Invoice, we hereby place this order for the goods listed below.",
-  terms:"1. Specifications, model and price are as per the referenced Proforma Invoice.\\n2. Payment: Advance as stated above; balance payable as mutually agreed before dispatch.\\n3. Delivery: Please confirm dispatch date and transport details in writing.\\n4. Goods must be new and covered by the applicable manufacturer's warranty. Goods not conforming to the order specification may be rejected.\\n5. The Tax Invoice must quote this PO number and our GSTIN 36AAYFN2455Q1Z8.",
-  advance_paid:"0", items:[blankItem()]
+  terms:"1. Specifications, model and price are as per the referenced Proforma Invoice.\n2. Payment: Advance as stated above; balance payable as mutually agreed before dispatch.\n3. Delivery: Please confirm dispatch date and transport details in writing.\n4. Goods must be new and covered by the applicable manufacturer's warranty. Goods not conforming to the order specification may be rejected.\n5. The Tax Invoice must quote this PO number and our GSTIN 36AAYFN2455Q1Z8.",
+  advance_paid:"", items:[blankItem()]
 });
 const num = v => Number(v)||0;
 const money = n => num(n).toLocaleString("en-IN",{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -105,11 +105,13 @@ export default function PurchaseOrdersView() {
   const set=k=>v=>setForm(f=>({...f,[k]:v}));
   const setItem=(idx,k,v)=>setForm(f=>({...f,items:f.items.map((it,i)=>i===idx?{...it,[k]:v}:it)}));
   function addNew(){setEditing(null);setForm(blank());setShow(true);}
-  function edit(row){setEditing(row.id);setForm({...blank(),...row,advance_paid:String(row.advance_paid??0),items:Array.isArray(row.items)&&row.items.length?row.items:[blankItem()]});setShow(true);}
+  function edit(row){setEditing(row.id);setForm({...blank(),...row,advance_paid:String(row.advance_paid??""),items:Array.isArray(row.items)&&row.items.length?row.items:[blankItem()]});setShow(true);}
   function chooseVendor(name){const s=vendors.find(x=>x.name===name);setForm(f=>({...f,vendor_name:name,...(s?{vendor_address:s.address||"",vendor_contact:s.contact||"",vendor_email:s.email||"",vendor_gstin:s.gstin||""}:{})}));}
   async function save(makeIssued=false){
     if(!form.vendor_name.trim())return alert("Vendor name is required.");
     if(!form.items.some(i=>i.description.trim()))return alert("Add at least one product description.");
+    if(num(form.advance_paid)<0)return alert("Advance paid cannot be negative.");
+    if(num(form.advance_paid)>totals(form.items).total)return alert("Advance paid cannot exceed the total PO value.");
     setBusy(true);
     try{
       const sums=totals(form.items), fy=currentFY(new Date(`${form.po_date}T12:00:00`));
@@ -171,7 +173,7 @@ export default function PurchaseOrdersView() {
         <div className="config-card"><h3>Products & Tax</h3><div style={{overflowX:"auto"}}><table><thead><tr><th>Description / Specs</th><th>HSN</th><th>Qty</th><th>Unit Rate ₹</th><th>GST %</th><th>Tax Type</th><th></th></tr></thead><tbody>{form.items.map((it,i)=><tr key={i}><td style={{minWidth:260}}><input placeholder="Product description" value={it.description} onChange={e=>setItem(i,"description",e.target.value)} style={{width:"100%",marginBottom:5}}/><input placeholder="Model" value={it.model} onChange={e=>setItem(i,"model",e.target.value)} style={{width:"100%",marginBottom:5}}/><textarea placeholder="Specifications" rows={2} value={it.specifications} onChange={e=>setItem(i,"specifications",e.target.value)} style={{width:"100%"}}/></td><td><input value={it.hsn} onChange={e=>setItem(i,"hsn",e.target.value)} style={{width:85}}/></td><td><input type="number" min="0" value={it.qty} onChange={e=>setItem(i,"qty",e.target.value)} style={{width:65}}/></td><td><input type="number" min="0" value={it.rate} onChange={e=>setItem(i,"rate",e.target.value)} style={{width:110}}/></td><td><input type="number" min="0" value={it.gst} onChange={e=>setItem(i,"gst",e.target.value)} style={{width:65}}/></td><td><select value={it.taxType} onChange={e=>setItem(i,"taxType",e.target.value)}><option>IGST</option><option>CGST + SGST</option><option>None</option></select></td><td><button className="btn btn-danger btn-sm" onClick={()=>setForm(f=>({...f,items:f.items.filter((_,j)=>j!==i)}))}>×</button></td></tr>)}</tbody></table></div><button className="btn btn-ghost btn-sm" style={{marginTop:10}} onClick={()=>setForm(f=>({...f,items:[...f.items,blankItem()]}))}>＋ Add product</button>
           <div style={{display:"flex",justifyContent:"flex-end",marginTop:14}}><div style={{minWidth:260}}><div className="cost-row"><span className="cost-label">Taxable value</span><span className="mono">₹{money(total.taxable)}</span></div><div className="cost-row"><span className="cost-label">GST total</span><span className="mono">₹{money(total.tax)}</span></div><div className="cost-row grand"><span className="cost-label">Grand total</span><span className="cost-val">₹{money(total.total)}</span></div></div></div>
         </div>
-        <div className="config-card"><h3>Order & Payment</h3><div className="form-row cols-2"><Field label="Subject">{input(form.subject,set("subject"))}</Field><Field label="Advance Paid ₹"><input type="number" value={form.advance_paid} onChange={e=>set("advance_paid")(e.target.value)}/></Field><Field label="Introductory Text" span={2}><textarea rows={2} value={form.intro_text} onChange={e=>set("intro_text")(e.target.value)}/></Field><Field label="Terms & Conditions" span={2}><textarea rows={5} value={form.terms} onChange={e=>set("terms")(e.target.value)}/></Field></div><div style={{fontSize:12,color:"var(--text2)"}}>Balance payable: <b style={{color:"var(--accent)"}}>₹{money(total.total-num(form.advance_paid))}</b>. PO number is assigned by the database when you first save.</div></div>
+        <div className="config-card"><h3>Order & Payment</h3><div className="form-row cols-2"><Field label="Subject">{input(form.subject,set("subject"))}</Field><Field label="Less: Advance Paid (optional) ₹"><input type="number" min="0" max={total.total} placeholder="0 if no advance paid" value={form.advance_paid} onChange={e=>set("advance_paid")(e.target.value)}/></Field><Field label="Introductory Text" span={2}><textarea rows={2} value={form.intro_text} onChange={e=>set("intro_text")(e.target.value)}/></Field><Field label="Terms & Conditions" span={2}><textarea rows={5} value={form.terms} onChange={e=>set("terms")(e.target.value)}/></Field></div><div style={{fontSize:12,color:"var(--text2)"}}>Balance payable after advance: <b style={{color:"var(--accent)"}}>₹{money(total.total-num(form.advance_paid))}</b>. Leave advance blank if no advance has been paid. PO number is assigned by the database when you first save.</div></div>
       </div>
       <div className="modal-foot"><button className="btn btn-ghost" onClick={()=>setShow(false)}>Close</button><button className="btn btn-ghost" disabled={busy} onClick={()=>save(false)}>{busy?"Saving…":"Save Draft"}</button><button className="btn btn-primary" disabled={busy} onClick={()=>save(true)}>{busy?"Saving…":"Save & Issue PO"}</button></div>
     </div></div>}
@@ -180,35 +182,114 @@ export default function PurchaseOrdersView() {
 
 function downloadPDF(r){
   const doc=new jsPDF({unit:"pt",format:"a4"}), w=doc.internal.pageSize.getWidth(), h=doc.internal.pageSize.getHeight();
-  const safe=v=>String(v??"").replace(/₹/g,"Rs. ");
-  const wrap=(text,x,y,max,lh=12)=>{const lines=doc.splitTextToSize(safe(text),max);doc.text(lines,x,y);return y+lines.length*lh;};
-  doc.setFont("helvetica","bold");doc.setFontSize(15);doc.text("NOVA GEO RESOURCES LLP",w/2,35,{align:"center"});
-  doc.setFont("helvetica","normal");doc.setFontSize(8.5);doc.text("FLAT NO. 109, ARK HOMES, IRIS BLOCK, BOLARUM, MEDCHAL TELANGANA - 500010",w/2,49,{align:"center"});
-  doc.text("M: +91-9999236393  |  E: NOVAGEORESOURCES@GMAIL.COM",w/2,61,{align:"center"});
-  doc.setFont("helvetica","bold");doc.setFontSize(13);doc.text("PURCHASE ORDER",w/2,83,{align:"center"});
-  doc.setFont("helvetica","normal");doc.setFontSize(9);
-  doc.text(`PO No.: ${r.po_number||"Draft"}`,40,103);doc.text(`PO Date: ${r.po_date||""}`,w-40,103,{align:"right"});
-  doc.text(`Ref. PI No.: ${r.pi_number||"—"}`,40,117);doc.text(`PI Date: ${r.pi_date||"—"}`,w-40,117,{align:"right"});
-  let y=135;
-  doc.setDrawColor(180);doc.line(40,y,w-40,y);y+=13;
-  doc.setFont("helvetica","bold");doc.text("TO (VENDOR)",40,y);doc.text("BILL TO (BUYER)",w/2+8,y);y+=13;
-  doc.setFont("helvetica","normal");
-  const left=[r.vendor_name,r.vendor_address,r.vendor_gstin?`GSTIN: ${r.vendor_gstin}`:"",r.vendor_email?`Email: ${r.vendor_email}`:"",r.vendor_contact?`Contact: ${r.vendor_contact}`:"",r.kind_attn?`Kind Attn: ${r.kind_attn}`:""].filter(Boolean).join("\n");
-  const right=[r.bill_to_name,r.bill_to_address,r.bill_to_gstin?`GSTIN: ${r.bill_to_gstin}`:"",r.bill_to_contact].filter(Boolean).join("\n");
-  const ly=wrap(left,40,y,w/2-55,11), ry=wrap(right,w/2+8,y,w/2-55,11);y=Math.max(ly,ry)+8;
-  y=wrap(`DELIVER TO: ${r.delivery_address||""}`,40,y,w-80,11)+6;
-  y=wrap(`Subject: ${r.subject||`Purchase Order for ${(r.items||[]).map(i=>i.description).filter(Boolean).join(", ")}`}`,40,y,w-80,12)+3;
-  y=wrap(r.intro_text||"",40,y,w-80,11)+6;
-  const items=(r.items||[]).map((it,i)=>{const c=calc(it);return [i+1,[it.description,it.model?`Model No. ${it.model}`:"",it.specifications].filter(Boolean).join("\n"),it.hsn||"—",num(it.qty),money(it.rate),money(c.taxable),`${it.taxType==="None"?"No tax":it.taxType+" @ "+it.gst+"%"}\n${money(c.tax)}`,money(c.total)];});
-  autoTable(doc,{startY:y,head:[["S.No","Description","HSN","Qty","Unit Rate\n(Rs.)","Taxable Value\n(Rs.)","GST / Tax\n(Rs.)","Total\n(Rs.)"]],body:items,foot:[["","","","","","TOTAL",money(totals(r.items||[]).tax),money(totals(r.items||[]).total)]],theme:"grid",styles:{font:"helvetica",fontSize:7.5,cellPadding:4,overflow:"linebreak",valign:"top"},headStyles:{fillColor:[238,240,242],textColor:20,fontStyle:"bold"},footStyles:{fillColor:[248,248,248],textColor:20,fontStyle:"bold"},columnStyles:{0:{cellWidth:25},1:{cellWidth:150},2:{cellWidth:42},3:{cellWidth:28},4:{cellWidth:55},5:{cellWidth:58},6:{cellWidth:62},7:{cellWidth:58}},margin:{left:40,right:40}});
-  y=doc.lastAutoTable.finalY+13;
-  const t=totals(r.items||[]), adv=num(r.advance_paid);
-  y=wrap(`Amount in words: ${inWords(t.total)}`,40,y,w-80,12)+8;
-  const summaries=[["Total Order Value (incl. tax)",`Rs. ${money(t.total)}`],["Less: Advance paid",`Rs. ${money(adv)}`],["Balance payable",`Rs. ${money(t.total-adv)}`]];
-  summaries.forEach((a,i)=>{doc.setFont("helvetica",i===2?"bold":"normal");doc.text(a[0],w-300,y);doc.text(a[1],w-40,y,{align:"right"});y+=14;});
-  y+=10;
-  if(r.terms){if(y>h-110){doc.addPage();y=45;}doc.setFont("helvetica","bold");doc.setFontSize(9);doc.text("Terms & Conditions",40,y);y+=13;doc.setFont("helvetica","normal");doc.setFontSize(8);y=wrap(r.terms,40,y,w-80,10)+14;}
-  if(y>h-60){doc.addPage();y=45;}
-  doc.setFont("helvetica","bold");doc.setFontSize(9);doc.text("For NOVA GEO RESOURCES LLP",w-40,y,{align:"right"});doc.setFont("helvetica","normal");doc.text("Authorised Signatory",w-40,y+42,{align:"right"});
+  const navy=[29,57,96], pale=[220,230,242], white=[255,255,255], ink=[20,20,20];
+  const left=44, right=w-44, contentW=right-left;
+  const safe=v=>String(v??"").replace(/₹/g,"Rs. ").replace(/\r/g,"");
+  const dateFmt=v=>{if(!v)return "";const m=String(v).match(/^(\d{4})-(\d{2})-(\d{2})/);return m?`${m[3]}-${m[2]}-${m[1]}`:String(v)};
+  const money0=n=>Math.round(num(n)).toLocaleString("en-IN");
+  const setFont=(style="normal",size=8.5,color=ink)=>{doc.setFont("times",style);doc.setFontSize(size);doc.setTextColor(...color);};
+  const linesFor=(text,width)=>doc.splitTextToSize(safe(text),width);
+  const textBlock=(text,x,y,width,{size=8.5,style="normal",color=ink,lh=10.5}={})=>{
+    const lines=linesFor(text,width);setFont(style,size,color);doc.text(lines,x,y);return y+lines.length*lh;
+  };
+  const ensureSpace=(y,needed)=>{if(y+needed>h-38){doc.addPage();return 42;}return y;};
+  const rule=(y,color=navy,width=1)=>{doc.setDrawColor(...color);doc.setLineWidth(width);doc.line(left,y,right,y);};
+
+  // Header: navy serif typography and divider, matching the supplied Nova Geo PO.
+  setFont("bold",25,navy);doc.text("NOVA GEO RESOURCES LLP",w/2,34,{align:"center"});
+  setFont("bold",9.5,navy);doc.text("FLAT NO. 109, ARK HOMES, IRIS BLOCK, BOLARUM, MEDCHAL TELANGANA - 500010",w/2,49,{align:"center"});
+  setFont("bold",9.5,navy);doc.setTextColor(230,95,35);doc.text("M:",w/2-134,61,{align:"left"});doc.setTextColor(...navy);doc.text("+91-9999236393",w/2-120,61,{align:"left"});doc.setTextColor(230,95,35);doc.text("E:",w/2+12,61,{align:"left"});doc.setTextColor(...navy);doc.text("NOVAGEORESOURCES@GMAIL.COM",w/2+25,61,{align:"left"});
+  doc.setDrawColor(...navy);doc.setLineWidth(1.8);doc.line(20,68,w-20,68);
+  setFont("bold",15,navy);doc.text("PURCHASE ORDER",w/2,91,{align:"center"});
+
+  let y=104;
+  // PO and PI reference grid.
+  const metaH=16, half=contentW/2, labelW=76;
+  const metaRows=[[["PO No.",r.po_number||"Draft"],["PO Date",dateFmt(r.po_date)]],[["Ref. PI No.",r.pi_number||""],["PI Date",dateFmt(r.pi_date)]]];
+  metaRows.forEach(row=>{
+    let x=left;
+    row.forEach((pair,j)=>{
+      const cellW=half, labW=labelW;
+      doc.setFillColor(...pale);doc.setDrawColor(...navy);doc.setLineWidth(.55);doc.rect(x,y,labW,metaH,"FD");
+      doc.setFillColor(...white);doc.rect(x+labW,y,cellW-labW,metaH,"FD");
+      setFont("bold",8.5,ink);doc.text(pair[0],x+4,y+11);
+      setFont("normal",8.5,ink);doc.text(safe(pair[1]||"—"),x+labW+4,y+11);
+      x+=cellW;
+    });
+    y+=metaH;
+  });
+  y+=18;
+
+  // Vendor / buyer columns with the same boxed two-column arrangement.
+  const boxTop=y, colW=contentW/2, headH=16, pad=4;
+  const vendorLines=[r.vendor_name,r.vendor_address,r.vendor_gstin?`GSTIN: ${r.vendor_gstin}`:"",r.vendor_email?`Email: ${r.vendor_email}`:"",r.vendor_contact?`Contact: ${r.vendor_contact}`:"",r.kind_attn?`Kind Attn: ${r.kind_attn}`:""].filter(Boolean);
+  const buyerLines=[r.bill_to_name,r.bill_to_address,r.bill_to_gstin?`GSTIN: ${r.bill_to_gstin}`:"",r.bill_to_contact?`Contact: ${r.bill_to_contact}`:""].filter(Boolean);
+  const measureParty=arr=>{
+    let height=headH+5;
+    arr.forEach((line,i)=>{const bold=i===0||(String(line).startsWith("GSTIN:")||String(line).startsWith("Email:")||String(line).startsWith("Contact:")||String(line).startsWith("Kind Attn:"));const ll=linesFor(line,colW-2*pad-4);height+=ll.length*(bold?10:10.5);});
+    return height+4;
+  };
+  const partyH=Math.max(measureParty(vendorLines),measureParty(buyerLines));
+  doc.setDrawColor(...navy);doc.setLineWidth(.6);doc.rect(left,boxTop,colW,partyH);doc.rect(left+colW,boxTop,colW,partyH);
+  setFont("bold",9,ink);doc.text("TO (VENDOR)",left+pad,boxTop+11);doc.text("BILL TO (BUYER)",left+colW+pad,boxTop+11);
+  const drawParty=(arr,x)=>{let yy=boxTop+headH+1;arr.forEach((line,i)=>{const bold=i===0||/^(GSTIN:|Email:|Contact:|Kind Attn:)/.test(String(line));yy=textBlock(line,x+pad,yy,colW-2*pad-4,{size:8.3,style:bold?"bold":"normal",lh:10});});};
+  drawParty(vendorLines,left);drawParty(buyerLines,left+colW);
+  y=boxTop+partyH;
+  const deliverText=`DELIVER TO: ${r.delivery_address||""}`;
+  const deliverLines=linesFor(deliverText,contentW-10), deliverH=Math.max(20,deliverLines.length*10.5+7);
+  doc.setFillColor(...pale);doc.setDrawColor(...navy);doc.rect(left,y,contentW,deliverH,"FD");
+  textBlock(deliverText,left+4,y+11,contentW-8,{size:8.5,lh:10.5});y+=deliverH+18;
+
+  const subject=r.subject||`Purchase Order for ${(r.items||[]).map(i=>i.description).filter(Boolean).join(", ")}`;
+  y=textBlock(`Subject: ${subject}`,left+4,y,contentW-8,{size:9,style:"bold",color:navy,lh:11})+4;
+  y=textBlock(r.intro_text||"",left+4,y,contentW-8,{size:8.5,lh:10.5})+7;
+
+  // Item table: light blue headings, navy borders, serif text, as in the supplied PDF.
+  const itemRows=(r.items||[]).map((it,i)=>{
+    const c=calc(it), desc=[it.description,it.model?`Model No. ${it.model}`:"",it.specifications].filter(Boolean).join("\n");
+    return [String(i+1),desc,it.hsn||"—",String(it.qty??""),money0(it.rate),money0(c.taxable),`${it.taxType==="None"?"No tax":`${it.taxType} @ ${it.gst}%`}\n${money0(c.tax)}`,money0(c.total)];
+  });
+  const t=totals(r.items||[]);
+  const taxKinds=[...new Set((r.items||[]).map(i=>i.taxType).filter(Boolean))];
+  const gstRates=[...new Set((r.items||[]).filter(i=>i.taxType!=="None").map(i=>num(i.gst)))];
+  const taxHeading=taxKinds.length===1&&taxKinds[0]==="IGST"&&gstRates.length===1?`IGST @ ${gstRates[0]}%\n(Rs.)`:taxKinds.length===1&&taxKinds[0]==="CGST + SGST"&&gstRates.length===1?`CGST + SGST @ ${gstRates[0]/2}% + ${gstRates[0]/2}%\n(Rs.)`:"GST / Tax\n(Rs.)";
+  autoTable(doc,{
+    startY:y,head:[["S.No","Description","HSN Code","Qty","Unit Rate\n(Rs.)","Taxable Value\n(Rs.)",taxHeading,"Total (Rs.)"]],
+    body:itemRows,foot:[["","","","","","TOTAL",money0(t.tax),money0(t.total)]],
+    theme:"grid",styles:{font:"times",fontSize:7.8,textColor:ink,lineColor:navy,lineWidth:.45,cellPadding:3.5,overflow:"linebreak",valign:"top"},
+    headStyles:{fillColor:pale,textColor:ink,fontStyle:"bold",halign:"center",valign:"middle",lineColor:navy,lineWidth:.65},
+    footStyles:{fillColor:pale,textColor:ink,fontStyle:"bold",lineColor:navy,lineWidth:.65},
+    columnStyles:{0:{cellWidth:29,halign:"center"},1:{cellWidth:165},2:{cellWidth:44,halign:"center"},3:{cellWidth:28,halign:"center"},4:{cellWidth:53,halign:"right"},5:{cellWidth:61,halign:"right"},6:{cellWidth:67,halign:"right"},7:{cellWidth:60,halign:"right"}},
+    margin:{left,right},didDrawPage:()=>{doc.setDrawColor(...navy);}
+  });
+  y=doc.lastAutoTable.finalY;
+  // Amount-in-words row bordered like the source PDF.
+  const words=`Amount in words: ${inWords(t.total)}`;
+  const wordLines=linesFor(words,contentW-10), wordH=Math.max(17,wordLines.length*10+6);
+  y=ensureSpace(y,wordH+68);
+  doc.setDrawColor(...navy);doc.setLineWidth(.6);doc.rect(left,y,contentW,wordH);
+  textBlock(words,left+4,y+11,contentW-8,{size:8.8,lh:10});y+=wordH+18;
+
+  // Payment summary, with an editable optional advance amount.
+  const adv=Math.max(0,num(r.advance_paid)), balance=t.total-adv;
+  const summaryRows=[["Total Order Value (incl. tax)",`Rs. ${money0(t.total)}`],["Less: Advance paid",`Rs. ${money0(adv)}`],["Balance payable before dispatch (all inclusive)",`Rs. ${money0(balance)}`]];
+  const sumW=contentW, labelW2=sumW-112, rowH=17;
+  summaryRows.forEach((row,i)=>{
+    y=ensureSpace(y,rowH+40);
+    if(i===2)doc.setFillColor(...pale);else doc.setFillColor(...white);
+    doc.setDrawColor(...navy);doc.setLineWidth(.55);doc.rect(left+sumW-labelW2,y,labelW2,rowH,"FD");doc.rect(left+sumW-112,y,112,rowH,"FD");
+    setFont(i===2?"bold":"normal",8.6,ink);doc.text(row[0],left+sumW-116,y+11,{align:"right"});doc.text(row[1],right-4,y+11,{align:"right"});y+=rowH;
+  });
+  y+=17;
+
+  // Terms: keep the original numbering and compact paragraph styling.
+  if(r.terms){
+    const termLines=linesFor(r.terms,contentW-8);y=ensureSpace(y,termLines.length*9.4+24);
+    setFont("bold",9.5,navy);doc.text("Terms & Conditions",left+4,y);y+=13;
+    y=textBlock(r.terms,left+4,y,contentW-8,{size:8.2,lh:9.5})+12;
+  }
+  y=ensureSpace(y,60);
+  setFont("bold",9,navy);doc.text("For NOVA GEO RESOURCES LLP",right-2,y,{align:"right"});
+  setFont("normal",8.5,ink);doc.text("Authorised Signatory",right-2,y+44,{align:"right"});
   doc.save(`${(r.po_number||"NGR-PO").replaceAll("/","-")}.pdf`);
 }
