@@ -104,7 +104,11 @@ export async function loadAll() {
     remarks: p.remarks || '',
   }));
 
+  let capitalProjects = [];
+  try { capitalProjects = await loadCapitalProjects(); } catch (e) { console.warn('Capital projects not set up yet:', e.message); }
+
   return {
+    capitalProjects,
     suppliers: appSuppliers,
     purchases: appPurchases, expenses: appExpenses,
     capitalItems: appCapitalItems,
@@ -402,4 +406,53 @@ export async function logPartnerCashbookEntry(txn, partnerName, type, accountTyp
     bankTxnId: txn.id,
     remarks: txn.description,
   });
+}
+
+
+// ── CAPITAL PROJECTS (big-ticket purchases paid in instalments) ────────────────
+// Tables: capital_projects, capital_project_payments (supabase/003_capital_projects.sql)
+const mapCapPay = x => ({
+  id: x.id, projectId: x.project_id, date: x.pay_date, amount: +x.amount,
+  paymentMode: x.payment_mode || 'bank', bankTxnId: x.bank_txn_id, reference: x.reference || '', remarks: x.remarks || '',
+});
+const mapCapProject = (p, pays = []) => {
+  const payments = pays.filter(x => x.project_id === p.id).map(mapCapPay);
+  const paid = payments.reduce((s, x) => s + x.amount, 0);
+  return {
+    id: p.id, projectNo: p.project_no || `CP-${p.id}`, date: p.p_date, category: p.category || 'machinery',
+    vendorName: p.vendor_name, description: p.description || '', totalCost: +p.total_cost, reference: p.reference || '',
+    payments, paid, due: Math.max(0, +p.total_cost - paid),
+  };
+};
+export async function loadCapitalProjects() {
+  const [ps, pays] = await Promise.all([
+    q(supabase.from('capital_projects').select('*').order('p_date', { ascending: false })),
+    q(supabase.from('capital_project_payments').select('*').order('pay_date', { ascending: false })),
+  ]);
+  return ps.map(p => mapCapProject(p, pays));
+}
+export async function saveCapitalProject(data) {
+  const row = {
+    p_date: data.date, category: data.category, vendor_name: (data.vendorName || '').trim(),
+    description: data.description || null, total_cost: +data.totalCost || 0, reference: data.reference || null,
+  };
+  const res = data.id
+    ? await q1(supabase.from('capital_projects').update(row).eq('id', data.id).select().single())
+    : await q1(supabase.from('capital_projects').insert(row).select().single());
+  return mapCapProject(res);
+}
+export async function deleteCapitalProject(id) {
+  const { error } = await supabase.from('capital_projects').delete().eq('id', id);
+  if (error) throw error;
+}
+export async function addCapitalProjectPayment(projectId, data) {
+  const row = {
+    project_id: projectId, pay_date: data.date, amount: +data.amount || 0, payment_mode: data.paymentMode || 'bank',
+    bank_txn_id: data.bankTxnId || null, reference: data.reference || null, remarks: data.remarks || null,
+  };
+  return mapCapPay(await q1(supabase.from('capital_project_payments').insert(row).select().single()));
+}
+export async function deleteCapitalProjectPayment(id) {
+  const { error } = await supabase.from('capital_project_payments').delete().eq('id', id);
+  if (error) throw error;
 }

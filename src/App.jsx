@@ -6,6 +6,13 @@ import * as plannedDb from "./plannedExpensesDb.js";
 import PurchaseOrdersView from "./PurchaseOrders.jsx";
 import { supabase } from "./supabase.js";
 import { exportStatementPDF, exportVendorSummaryPDF, exportPlannedExpensesPDF } from "./pdfExport.js";
+import { useAuth, signOut, ROLE_LABELS, canWrite } from "./auth.jsx";
+import { UsersView, AuditView } from "./admin.jsx";
+import { SalesInvoicesView, CustomersView } from "./sales.jsx";
+import { GstView } from "./gst.jsx";
+import { TdsView } from "./tds.jsx";
+import { ComplianceCalendarView, TaxSettingsView, SuppliersFullView, DueSoonPanel } from "./compliance.jsx";
+import { fmt, fmtMT, today, notify, BadgeComponent, StatCard, FG, Modal, EmptyState, SearchBar, RowActions, exportRowsToExcel } from "./ui.jsx";
 
 // ── Loans database layer (inlined so the app builds without a separate file) ──
 
@@ -21,7 +28,8 @@ const LOANS_SETUP_SQL = `create table if not exists loan_entries (
   project_payment_id text,
   note text,
   created_at timestamptz default now()
-);`;
+);
+select fin_secure_table('loan_entries');`;
 
 const mapEntry = r => ({
   id: r.id, date: r.entry_date || '', kind: r.kind || 'received', lender: r.lender || '',
@@ -93,11 +101,8 @@ insert into storage.buckets (id, name, public)
 values ('erp-attachments', 'erp-attachments', false)
 on conflict (id) do nothing;
 
-drop policy if exists "erp attachments access" on storage.objects;
-create policy "erp attachments access" on storage.objects
-  for all to anon, authenticated
-  using (bucket_id = 'erp-attachments')
-  with check (bucket_id = 'erp-attachments');`;
+-- storage access rules for this bucket are set by supabase/001_security.sql
+select fin_secure_table('attachments');`;
 
 const mapAttachment = r => ({
   id: r.id, entityType: r.entity_type, entityId: String(r.entity_id), path: r.file_path, name: r.file_name,
@@ -176,15 +181,15 @@ function AttachmentsModal({ entityType, entityId, title, onClose }) {
         const row = await uploadAttachment(entityType, entityId, f, label);
         attStore.set({ items: [row, ...attStore.get().items] });
       }
-    } catch (err) { alert(err.message || String(err)); }
+    } catch (err) { notify(err.message || String(err)); }
     setBusy(false);
   }
   async function del(a) {
     if (!confirm(`Delete ${a.name}?`)) return;
     try { await removeAttachment(a); attStore.set({ items: attStore.get().items.filter(x => x.id !== a.id) }); }
-    catch (err) { alert(err.message || String(err)); }
+    catch (err) { notify(err.message || String(err)); }
   }
-  async function view(a) { try { await openAttachment(a); } catch (err) { alert(err.message || String(err)); } }
+  async function view(a) { try { await openAttachment(a); } catch (err) { notify(err.message || String(err)); } }
 
   return (
     <Modal title={title} onClose={onClose}>
@@ -230,225 +235,8 @@ function AttachmentsModal({ entityType, entityId, title, onClose }) {
 
 
 // ── Design System ─────────────────────────────────────────────────────────────
-const FONTS = `@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap');`;
-const CSS = `
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-:root{
-  --bg:#0d0d0d;--bg2:#161616;--bg3:#1e1e1e;--bg4:#252525;
-  --border:#2a2a2a;--border2:#333;--border3:#3d3d3d;
-  --text:#e8e6df;--text2:#999;--text3:#555;--text4:#333;
-  --accent:#c8f064;--accent2:#a8d844;--accent3:#e8ff8a;
-  --red:#ff5c5c;--amber:#f5a623;--blue:#5ca0ff;
-  --green:#4ecb71;--purple:#a78bfa;--teal:#2dd4bf;
-  --font:'Syne',sans-serif;--mono:'DM Mono',monospace;
-  --r:8px;--r2:12px;--r3:16px;
-  --shadow:0 2px 12px rgba(0,0,0,.4);--shadow2:0 4px 24px rgba(0,0,0,.6);
-}
-body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:14px;min-height:100vh;-webkit-font-smoothing:antialiased}
-.app{display:flex;min-height:100vh}
-
-/* ── Mobile Sidebar Drawer Fix ── */
-.sidebar {
-  width: 220px;
-  background: var(--bg2);
-  border-right: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  position: sticky;
-  top: 0;
-  height: 100vh;
-  flex-shrink: 0;
-  overflow: hidden;
-  transition: transform 0.25s ease-in-out;
-  z-index: 300;
-}
-.sidebar-logo{padding:20px 18px 14px;border-bottom:1px solid var(--border)}
-.sidebar-logo h1{font-size:17px;font-weight:800;letter-spacing:-.4px;color:var(--accent)}
-.sidebar-logo p{font-size:10px;color:var(--text3);margin-top:2px;letter-spacing:.1em;text-transform:uppercase;font-family:var(--mono)}
-.nav{flex:1;padding:6px;overflow-y:auto}
-.nav-label{font-size:9px;color:var(--text4);letter-spacing:.1em;text-transform:uppercase;font-family:var(--mono);padding:10px 10px 4px;margin-top:4px}
-.nav-item{display:flex;align-items:center;gap:9px;padding:7px 10px;border-radius:var(--r);cursor:pointer;color:var(--text2);font-size:12.5px;font-weight:500;transition:all .12s;border:none;background:none;width:100%;text-align:left;font-family:var(--font)}
-.nav-item:hover{background:var(--bg3);color:var(--text)}
-.nav-item.active{background:var(--accent);color:#0d0d0d;font-weight:600}
-.nav-item .icon{width:15px;text-align:center;font-size:12px;flex-shrink:0}
-.sidebar-foot{padding:10px 12px;border-top:1px solid var(--border);font-size:10px;color:var(--text4);font-family:var(--mono)}
-.main{flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden}
-.topbar{display:flex;align-items:center;justify-content:space-between;padding:14px 26px;border-bottom:1px solid var(--border);background:var(--bg);flex-shrink:0}
-.topbar h2{font-size:17px;font-weight:700;letter-spacing:-.3px}
-.topbar-right{display:flex;gap:8px;align-items:center}
-.content{padding:22px 26px;flex:1;overflow-y:auto}
-.btn{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:var(--r);font-family:var(--font);font-size:12.5px;font-weight:500;cursor:pointer;border:none;transition:all .12s;white-space:nowrap}
-.btn-primary{background:var(--accent);color:#0d0d0d}.btn-primary:hover{background:var(--accent2)}
-.btn-ghost{background:transparent;color:var(--text2);border:1px solid var(--border2)}.btn-ghost:hover{color:var(--text);border-color:var(--border3)}
-.btn-danger{background:transparent;color:var(--red);border:1px solid #3a1a1a}.btn-danger:hover{background:#1e0a0a}
-.btn-info{background:transparent;color:var(--blue);border:1px solid #1a2e4a}.btn-info:hover{background:#0a1a2e}
-.btn-sm{padding:4px 10px;font-size:11.5px}
-.btn:disabled{opacity:.45;cursor:not-allowed}
-.stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px}
-.stats-grid-5{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:20px}
-.stat-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r2);padding:14px 18px;position:relative;overflow:hidden}
-.stat-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px}
-.stat-card.green::before{background:var(--green)}.stat-card.amber::before{background:var(--amber)}
-.stat-card.red::before{background:var(--red)}.stat-card.blue::before{background:var(--blue)}
-.stat-card.purple::before{background:var(--purple)}.stat-card.teal::before{background:var(--teal)}
-.stat-card.accent::before{background:var(--accent)}
-.stat-label{font-size:10px;color:var(--text3);letter-spacing:.07em;text-transform:uppercase;font-family:var(--mono);margin-bottom:7px}
-.stat-val{font-size:22px;font-weight:700;letter-spacing:-.4px}
-.stat-val.green{color:var(--green)}.stat-val.amber{color:var(--amber)}.stat-val.red{color:var(--red)}
-.stat-val.blue{color:var(--blue)}.stat-val.purple{color:var(--purple)}.stat-val.teal{color:var(--teal)}
-.stat-val.accent{color:var(--accent)}.stat-val.white{color:var(--text)}
-.stat-sub{font-size:10px;color:var(--text3);margin-top:3px;font-family:var(--mono)}
-.table-wrap{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r2);overflow:hidden;margin-bottom:20px}
-.table-toolbar{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border);gap:12px;flex-wrap:wrap}
-.table-toolbar h3{font-size:13px;font-weight:600}
-table{width:100%;border-collapse:collapse}
-th{text-align:left;padding:9px 16px;font-size:10px;color:var(--text3);letter-spacing:.08em;text-transform:uppercase;font-family:var(--mono);border-bottom:1px solid var(--border);font-weight:500;white-space:nowrap}
-th.r,td.r{text-align:right}
-td{padding:10px 16px;font-size:12.5px;border-bottom:1px solid var(--border);vertical-align:middle}
-tr:last-child td{border-bottom:none}
-tr:hover td{background:rgba(255,255,255,.02)}
-.mono{font-family:var(--mono);font-size:11.5px}
-.badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:20px;font-size:10.5px;font-weight:500;font-family:var(--mono);text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}
-.badge-green,.badge-pass,.badge-running,.badge-sale{background:#0a2016;color:var(--green);border:1px solid #1a4028}
-.badge-amber,.badge-conditional,.badge-low,.badge-morning{background:#1a1500;color:var(--amber);border:1px solid #3a2e00}
-.badge-red,.badge-fail,.badge-rejected,.badge-negative{background:#200808;color:var(--red);border:1px solid #401010}
-.badge-blue,.badge-under-test,.badge-inward{background:#081828;color:var(--blue);border:1px solid #143050}
-.badge-muted,.badge-disposed{background:var(--bg3);color:var(--text3);border:1px solid var(--border)}
-.badge-teal,.badge-released,.badge-retained{background:#051e1a;color:var(--teal);border:1px solid #0d3830}
-.badge-purple,.badge-dispatched{background:#100a28;color:var(--purple);border:1px solid #201848}
-.badge-accent{background:#0d1a00;color:var(--accent);border:1px solid #1e3a00}
-.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.8);display:flex;align-items:center;justify-content:center;z-index:200;padding:20px;backdrop-filter:blur(2px)}
-.modal{background:var(--bg2);border:1px solid var(--border2);border-radius:var(--r3);width:100%;max-width:600px;max-height:92vh;display:flex;flex-direction:column;box-shadow:var(--shadow2)}
-.modal-lg{max-width:820px}
-.modal-head{display:flex;align-items:center;justify-content:space-between;padding:16px 22px;border-bottom:1px solid var(--border);flex-shrink:0}
-.modal-head h3{font-size:15px;font-weight:600}
-.modal-body{padding:20px 22px;overflow-y:auto;flex:1}
-.modal-foot{display:flex;justify-content:flex-end;gap:8px;padding:14px 22px;border-top:1px solid var(--border);flex-shrink:0}
-.form-row{display:grid;gap:14px;margin-bottom:14px}
-.form-row.cols-2{grid-template-columns:1fr 1fr}
-.form-row.cols-3{grid-template-columns:1fr 1fr 1fr}
-.form-group{display:flex;flex-direction:column;gap:5px}
-.form-group label{font-size:10.5px;color:var(--text2);letter-spacing:.05em;text-transform:uppercase;font-family:var(--mono);font-weight:500}
-.form-group input,.form-group select,.form-group textarea{background:var(--bg3);border:1px solid var(--border2);border-radius:var(--r);padding:8px 11px;color:var(--text);font-family:var(--font);font-size:13px;outline:none;width:100%}
-.form-group input:focus,.form-group select:focus{border-color:var(--accent)}
-.form-note{font-size:10.5px;color:var(--text3);font-family:var(--mono);margin-top:2px}
-.empty{text-align:center;padding:48px 24px;color:var(--text3)}
-.empty-icon{font-size:32px;margin-bottom:12px}
-.filter-bar{display:flex;gap:10px;margin-bottom:16px;align-items:center;flex-wrap:wrap}
-.config-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r2);padding:18px 20px;margin-bottom:16px}
-.config-card h3{font-size:13px;font-weight:600;margin-bottom:14px}
-.config-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}
-.cost-row{display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--border)}
-.cost-row.grand{border-top:2px solid var(--border2);margin-top:4px;padding-top:12px}
-.cost-row.grand .cost-val{font-size:16px;font-weight:700;color:var(--accent)}
-.cost-label{font-size:12.5px;color:var(--text2)}
-.cost-val{font-family:var(--mono);font-size:12.5px;color:var(--text);text-align:right}
-.report-section{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r2);padding:20px 22px;margin-bottom:20px}
-.two-col{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px}
-.cpt-banner{background:#0a1a00;border:1px solid #1e3a00;border-radius:var(--r2);padding:16px 22px;display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
-.cpt-val{font-size:30px;font-weight:800;color:var(--accent);font-family:var(--mono)}
-.cpt-sub{font-size:11px;color:var(--text3);margin-top:3px;font-family:var(--mono)}
-.pill-tabs{display:flex;gap:4px;background:var(--bg3);border-radius:var(--r2);padding:4px;margin-bottom:16px;width:fit-content}
-.pill-tab{padding:6px 16px;border-radius:var(--r);font-size:12px;font-weight:500;cursor:pointer;border:none;background:none;color:var(--text3);font-family:var(--font);transition:all .12s}
-.pill-tab.active{background:var(--bg2);color:var(--text);box-shadow:0 1px 4px rgba(0,0,0,.4)}
-.lot-chip{display:inline-flex;align-items:center;gap:5px;background:#0a1a00;border:1px solid #1e3a00;border-radius:var(--r);padding:3px 10px;font-family:var(--mono);font-size:11px;color:var(--accent)}
-.output-rows{display:flex;flex-direction:column;gap:8px}
-.output-row{display:grid;grid-template-columns:1fr 1fr auto;gap:8px;align-items:end}
-.hamburger-btn{display:none;background:none;border:1px solid var(--border2);border-radius:var(--r);color:var(--text2);font-size:15px;padding:5px 9px;cursor:pointer;line-height:1;align-items:center;justify-content:center}
-.hamburger-btn:hover{color:var(--text);border-color:var(--border3)}
-.sidebar-close{display:none;background:none;border:none;color:var(--text2);font-size:15px;cursor:pointer;padding:4px 8px;line-height:1}
-.sidebar-close:hover{color:var(--text)}
-.due-badge{font-size:10px;font-family:var(--mono);padding:1px 7px;border-radius:20px;background:#1a1500;color:var(--amber);border:1px solid #3a2e00}
-
-/* ── Mobile & Tablet Responsiveness (Off-Canvas Sidebar Drawer) ── */
-@media (max-width: 860px) {
-  .sidebar {
-    position: fixed;
-    left: 0;
-    top: 0;
-    transform: translateX(-100%);
-    width: 240px !important;
-    box-shadow: var(--shadow2);
-  }
-  .sidebar.open {
-    transform: translateX(0);
-  }
-  .sidebar-backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.7);
-    z-index: 250;
-    backdrop-filter: blur(2px);
-  }
-  .main {
-    width: 100vw;
-  }
-  .form-group input, .form-group select, .form-group textarea {
-    font-size: 16px !important;
-  }
-  .btn {
-    padding: 10px 14px;
-    font-size: 13px;
-    min-height: 38px;
-  }
-  .btn-sm {
-    padding: 6px 10px;
-    font-size: 11.5px;
-    min-height: 30px;
-  }
-  .topbar {
-    padding: 12px 18px;
-  }
-  .content {
-    padding: 16px 18px;
-  }
-  .table-wrap {
-    -webkit-overflow-scrolling: touch;
-    overflow-x: auto;
-  }
-  .stats-grid, .stats-grid-5 {
-    grid-template-columns: 1fr 1fr;
-    gap: 8px;
-  }
-  .stat-card {
-    padding: 12px 14px;
-  }
-  .stat-val {
-    font-size: 19px;
-  }
-  .pill-tabs {
-    width: 100%;
-    overflow-x: auto;
-    flex-wrap: nowrap;
-    padding-bottom: 4px;
-  }
-  .pill-tab {
-    flex-shrink: 0;
-  }
-  .two-col {
-    grid-template-columns: 1fr;
-  }
-  .form-row.cols-2, .form-row.cols-3 {
-    grid-template-columns: 1fr;
-  }
-  .hamburger-btn {
-    display: inline-flex;
-  }
-  .sidebar-close {
-    display: inline-flex;
-  }
-}
-@media (max-width: 480px) {
-  .stats-grid, .stats-grid-5 {
-    grid-template-columns: 1fr;
-  }
-}
-`;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-const fmtMT = v => `${(+v||0).toFixed(3)} MT`;
-const fmt = n => `₹${(+n||0).toLocaleString("en-IN",{minimumFractionDigits:2,maximumFractionDigits:2})}`;
-const today = () => new Date().toISOString().split("T")[0];
 
 const BANK_STOPWORDS = new Set(["UPI","NEFT","IMPS","RTGS","ACH","ACH DR","ACH CR","POS","ATM","DR","CR","WDL","TRF","TRANSFER","BIL","MOB","INB","ECOM","ECS","ONL","P2A","P2M","P2PM","TXN","REF","VPA","PAYMENT","AUTOPAY","MANDATE","NACH"]);
 function normalizeDesc(desc) {
@@ -610,81 +398,34 @@ async function parsePdfStatement(file) {
 // ── Navigation ────────────────────────────────────────────────────────────────
 const NAV = [
   { id:"dashboard", label:"Dashboard", icon:"◈", group:null },
+  { id:"salesinvoices", label:"Sales Invoices", icon:"🧾", group:"Sales & GST" },
+  { id:"customers", label:"Customers", icon:"🏢", group:"Sales & GST" },
+  { id:"gst", label:"GST Returns", icon:"📊", group:"Sales & GST" },
+  { id:"compliance", label:"Compliance Calendar", icon:"📅", group:"Compliance" },
+  { id:"tds", label:"TDS", icon:"🧮", group:"Compliance" },
+  { id:"taxsettings", label:"Tax Settings", icon:"⚙", group:"Compliance" },
   { id:"vendorprojects", label:"Vendor Projects", icon:"🛠", group:"Commercial" },
   { id:"plannedexpenses", label:"Planned Expenses", icon:"🧮", group:"Commercial" },
   { id:"purchases", label:"Purchases", icon:"📥", group:"Commercial" },
   { id:"purchaseorders", label:"Purchase Orders", icon:"📄", group:"Commercial" },
-  { id:"opscosts", label:"Monthly Overheads", icon:"🧾", group:"Commercial" },
+  { id:"opscosts", label:"Monthly Overheads", icon:"💸", group:"Commercial" },
   { id:"capital", label:"Capital & Infra", icon:"🏗", group:"Commercial" },
   { id:"bankstatement", label:"Bank Statement", icon:"🏦", group:"Banking" },
   { id:"partners", label:"Partners & Capital", icon:"🤝", group:"Banking" },
   { id:"loans", label:"Loans", icon:"💳", group:"Banking" },
   { id:"balancesheet", label:"Balance Sheet", icon:"🏛", group:"Reports" },
   { id:"suppliers", label:"Suppliers", icon:"⛏", group:"Masters" },
+  { id:"users", label:"Users", icon:"👤", group:"Admin", admin:true },
+  { id:"audit", label:"Audit Trail", icon:"🛡", group:"Admin", admin:true },
 ];
 const TITLES = Object.fromEntries(NAV.map(n => [n.id, n.label]));
+function toggleTheme() {
+  const next = document.documentElement.dataset.theme === "light" ? "dark" : "light";
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem("fin-theme", next); } catch {}
+}
+const fyLabel = () => { const d = new Date(); const y = d.getMonth() >= 3 ? d.getFullYear() : d.getFullYear() - 1; return `${y}-${String((y + 1) % 100).padStart(2, "0")}`; };
 const GROUPS = [...new Set(NAV.filter(n => n.group).map(n => n.group))];
-
-function BadgeComponent({ type, children }) { return <span className={`badge badge-${type||"muted"}`}>{children}</span>; }
-function StatCard({ label, value, sub, color="blue" }) {
-  return <div className={`stat-card ${color}`}><div className="stat-label">{label}</div><div className={`stat-val ${color}`}>{value}</div>{sub&&<div className="stat-sub">{sub}</div>}</div>;
-}
-function FG({ label, note, children, span }) {
-  return <div className="form-group" style={span?{gridColumn:`span ${span}`}:{}}>{label&&<label>{label}</label>}{children}{note&&<div className="form-note">{note}</div>}</div>;
-}
-function Modal({ title, onClose, children, foot, size="" }) {
-  return (
-    <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div className={`modal ${size}`}>
-        <div className="modal-head"><h3>{title}</h3><button className="btn btn-ghost btn-sm" onClick={onClose}>✕</button></div>
-        <div className="modal-body">{children}</div>
-        {foot&&<div className="modal-foot">{foot}</div>}
-      </div>
-    </div>
-  );
-}
-
-function EmptyState({ icon, message, sub }) {
-  return (
-    <div className="empty">
-      <div className="empty-icon">{icon || "📭"}</div>
-      <p style={{ fontWeight: 600, marginBottom: 4 }}>{message}</p>
-      {sub && <p style={{ fontSize: 11.5, color: "var(--text3)", marginTop: 4 }}>{sub}</p>}
-    </div>
-  );
-}
-
-// ── Shared: search box used across the ledger/register views ──────────────────
-function SearchBar({ value, onChange, placeholder, style }) {
-  return (
-    <input
-      placeholder={placeholder}
-      value={value}
-      onChange={e => onChange(e.target.value)}
-      style={{ background: "var(--bg3)", border: "1px solid var(--border2)", borderRadius: "var(--r)", padding: "7px 11px", color: "var(--text)", fontSize: 12.5, minWidth: 260, ...style }}
-    />
-  );
-}
-
-// ── Shared: Edit/Delete action pair for a transaction row ─────────────────────
-function RowActions({ onEdit, onDelete }) {
-  if (!onEdit && !onDelete) return null;
-  return (
-    <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-      {onEdit && <button className="btn btn-ghost btn-sm" onClick={onEdit}>Edit</button>}
-      {onDelete && <button className="btn btn-danger btn-sm" onClick={onDelete}>Delete</button>}
-    </div>
-  );
-}
-
-// ── Shared: export any row-set to an .xlsx file (uses the xlsx lib already in use for bank imports) ──
-function exportRowsToExcel(fileName, rows) {
-  if (!rows || !rows.length) { alert("Nothing to export yet."); return; }
-  const ws = XLSX.utils.json_to_sheet(rows);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
-  XLSX.writeFile(wb, fileName.endsWith(".xlsx") ? fileName : `${fileName}.xlsx`);
-}
 
 // ── Shared: bank transactions grouped + merged by counterparty label ──────────
 // Centralizes the grouping logic that Expenses, Capital, Partners, and the Bank
@@ -734,7 +475,21 @@ function computeNetBookValue(category, amount, acquisitionDate) {
 
 // ── APP MAIN ──────────────────────────────────────────────────────────────────
 export default function App() {
-  const [view, setView] = useState("dashboard");
+  const { role, name } = useAuth();
+  const [view, setView] = useState(() => {
+    const h = decodeURIComponent(location.hash.slice(1));
+    return NAV.some(n => n.id === h) ? h : "dashboard";
+  });
+  const [loadError, setLoadError] = useState("");
+  const nav = NAV.filter(n => !n.admin || role === "admin");
+  // Each screen gets its own URL (#gst, #tds …) so Back/Forward and bookmarks work
+  useEffect(() => { if (decodeURIComponent(location.hash.slice(1)) !== view) history.pushState(null, "", `#${view}`); }, [view]);
+  useEffect(() => {
+    const onHash = () => { const h = decodeURIComponent(location.hash.slice(1)); if (NAV.some(n => n.id === h)) setView(h); };
+    window.addEventListener("hashchange", onHash);
+    window.addEventListener("popstate", onHash);
+    return () => { window.removeEventListener("hashchange", onHash); window.removeEventListener("popstate", onHash); };
+  }, []);
   const [navOpen, setNavOpen] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -764,6 +519,7 @@ export default function App() {
         setPartnerCashbook(d.partnerCashbook || []);
       } catch (err) {
         console.error("Database sync failed:", err);
+        setLoadError(err.message || String(err));
       }
       // Loaded on its own so the rest of the app still works if the
       // vendor-projects tables haven't been created yet.
@@ -795,31 +551,30 @@ export default function App() {
   const goTo = id => { setView(id); setNavOpen(false); };
 
   if (loading) {
-    return <div style={{ display:"flex", alignItems:"center", justifyContent:"center", minHeight:"100vh", background:"var(--bg)", color:"var(--accent)", fontFamily:"monospace" }}>Syncing Cloud Database...</div>;
+    return <div className="auth-wrap"><div className="loader"><span /><div className="mono">Loading the books…</div></div></div>;
   }
 
   return (
     <>
-      <style>{FONTS}{CSS}</style>
       <div className="app">
         {navOpen && <div className="sidebar-backdrop" onClick={() => setNavOpen(false)} />}
         <aside className={`sidebar${navOpen ? " open" : ""}`}>
           <div className="sidebar-logo">
             <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-              <div><h1>Finance ERP</h1><p>Nova Geo Resources</p></div>
+              <div><h1>Finance ERP</h1><p>Nova Geo Resources LLP</p></div>
               <button className="sidebar-close" onClick={() => setNavOpen(false)}>✕</button>
             </div>
           </div>
           <nav className="nav">
-            {NAV.filter(n => !n.group).map(n => (
+            {nav.filter(n => !n.group).map(n => (
               <button key={n.id} className={`nav-item${view === n.id ? " active" : ""}`} onClick={() => goTo(n.id)}>
                 <span className="icon">{n.icon}</span>{n.label}
               </button>
             ))}
-            {GROUPS.map(grp => (
+            {GROUPS.filter(grp => nav.some(n => n.group === grp)).map(grp => (
               <div key={grp}>
                 <div className="nav-label">{grp}</div>
-                {NAV.filter(n => n.group === grp).map(n => (
+                {nav.filter(n => n.group === grp).map(n => (
                   <button key={n.id} className={`nav-item${view === n.id ? " active" : ""}`} onClick={() => goTo(n.id)}>
                     <span className="icon">{n.icon}</span>{n.label}
                   </button>
@@ -827,7 +582,15 @@ export default function App() {
               </div>
             ))}
           </nav>
-          <div className="sidebar-foot">Real-Time Sync Active</div>
+          <div className="sidebar-foot user-chip">
+            <div className="user-avatar">{(name || "?").slice(0, 1).toUpperCase()}</div>
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div className="user-name">{name}</div>
+              <div className="user-role">{ROLE_LABELS[role]}</div>
+            </div>
+            <button className="btn btn-ghost btn-sm" title="Switch light / dark" onClick={toggleTheme}>Theme</button>
+            <button className="btn btn-ghost btn-sm" title="Sign out" onClick={signOut}>Sign out</button>
+          </div>
         </aside>
 
         <div className="main">
@@ -837,12 +600,14 @@ export default function App() {
               <h2>{TITLES[view] || view}</h2>
             </div>
             <div className="topbar-right">
-              <span className="mono" style={{ fontSize:11, color:"var(--text3)" }}>{today()}</span>
-              <BadgeComponent type="accent">Cloud Active</BadgeComponent>
+              <span className="mono hide-sm" style={{ fontSize:11, color:"var(--text3)" }}>{new Date().toLocaleDateString("en-IN", { weekday:"short", day:"numeric", month:"short", year:"numeric" })}</span>
+              {!canWrite(role) ? <BadgeComponent type="amber">Read only</BadgeComponent> : <BadgeComponent type="accent">FY {fyLabel()}</BadgeComponent>}
             </div>
           </div>
 
           <div className="content">
+            {loadError && <div className="callout callout-red"><b>Could not load data from the database.</b> {loadError} <button className="btn btn-ghost btn-sm" onClick={() => location.reload()}>Retry</button></div>}
+            {view === "dashboard" && <DueSoonPanel onOpen={() => goTo("compliance")} />}
             {view === "dashboard" && <DashboardView {...{ expenses, purchases, capitalItems, bankTxns, partnerCashbook, vendorProjects, projectPayments, goTo }} />}
             {view === "plannedexpenses" && <PlannedExpensesView />}
             {view === "vendorprojects" && (
@@ -873,7 +638,15 @@ export default function App() {
               />
             )}
             {view === "balancesheet" && <BalanceSheetView {...{ capitalItems, bankTxns, bankLabels, partnerCashbook, purchases, expenses, loanEntries }} />}
-            {view === "suppliers" && <MasterTableView title="Suppliers" noun="Supplier" items={suppliers} setItems={setSuppliers} saveFn={db.saveSupplier} delFn={db.deleteSupplier} fields={[{ key:"name", label:"Supplier Name", required:true },{ key:"contact", label:"Contact" }]} cols={[{ label:"Name", key:"name" },{ label:"Contact", key:"contact" }]} />}
+            {view === "salesinvoices" && <SalesInvoicesView bankTxns={bankTxns} />}
+            {view === "customers" && <CustomersView />}
+            {view === "gst" && <GstView purchases={purchases} />}
+            {view === "compliance" && <ComplianceCalendarView />}
+            {view === "tds" && <TdsView bankTxns={bankTxns} bankLabels={bankLabels} />}
+            {view === "taxsettings" && <TaxSettingsView />}
+            {view === "users" && role === "admin" && <UsersView />}
+            {view === "audit" && role === "admin" && <AuditView />}
+            {view === "suppliers" && <SuppliersFullView onChanged={rows => setSuppliers(rows.map(x => ({ id: x.id, name: x.name, contact: x.contact, phone: x.phone, address: x.address })))} />}
           </div>
         </div>
       </div>
@@ -913,19 +686,19 @@ function PlannedExpensesView() {
   function openAdd() { setEditingId(null); setForm(blank); setModalOpen(true); }
   function openEdit(x) { setEditingId(x.id); setForm({ itemName:x.itemName || "", category:x.category || "Other", estimatedAmount:String(x.estimatedAmount ?? ""), vendorName:x.vendorName || "", expectedDate:x.expectedDate || "", status:x.status || "Considering", priority:x.priority || "Normal", notes:x.notes || "" }); setModalOpen(true); }
   async function save() {
-    if (!form.itemName.trim() || !(+form.estimatedAmount > 0)) return alert("Please enter an item / expense name and an estimated amount greater than zero.");
+    if (!form.itemName.trim() || !(+form.estimatedAmount > 0)) return notify("Please enter an item / expense name and an estimated amount greater than zero.");
     setBusy(true);
     try {
       const saved = await plannedDb.savePlannedExpense(form, editingId);
       setItems(old => editingId ? old.map(x => x.id === editingId ? saved : x) : [saved, ...old]);
       setModalOpen(false); setForm(blank); setEditingId(null);
-    } catch (e) { alert(`Could not save planned expense: ${e.message || e}`); }
+    } catch (e) { notify(`Could not save planned expense: ${e.message || e}`); }
     finally { setBusy(false); }
   }
   async function remove(x) {
     if (!confirm(`Delete planned item “${x.itemName}”?`)) return;
     try { await plannedDb.deletePlannedExpense(x.id); setItems(old => old.filter(y => y.id !== x.id)); }
-    catch (e) { alert(`Could not delete item: ${e.message || e}`); }
+    catch (e) { notify(`Could not delete item: ${e.message || e}`); }
   }
   function exportPdf() {
     exportPlannedExpensesPDF({ items: activeItems, total, committed, fileName: "nova_geo_planned_expenses.pdf" });
@@ -985,23 +758,23 @@ function PurchasesView({ suppliers, purchases, setPurchases }) {
   }
 
   async function save() {
-    if (!f.supplierId || !f.quantityMT || !f.ratePerMT) return alert("Supplier, Quantity, and Rate required.");
+    if (!f.supplierId || !f.quantityMT || !f.ratePerMT) return notify("Supplier, Quantity, and Rate required.");
     try {
       const payload = editingId ? { ...f, id: editingId } : f;
       const row = await db.savePurchase(payload);
       if (editingId) setPurchases(ps => ps.map(p => p.id === editingId ? row : p));
       else setPurchases(ps => [row, ...ps]);
       setOpen(false); setF(blank); setEditingId(null);
-    } catch (err) { alert(err.message); }
+    } catch (err) { notify(err.message); }
   }
 
   async function remove(id) {
     if (!confirm("Delete this purchase order? This cannot be undone.")) return;
-    if (typeof db.deletePurchase !== "function") return alert("db.deletePurchase isn't implemented yet — add it to db.js to enable deleting POs.");
+    if (typeof db.deletePurchase !== "function") return notify("db.deletePurchase isn't implemented yet — add it to db.js to enable deleting POs.");
     try {
       await db.deletePurchase(id);
       setPurchases(ps => ps.filter(p => p.id !== id));
-    } catch (err) { alert(err.message); }
+    } catch (err) { notify(err.message); }
   }
 
   const supplierGroups = useMemo(() => {
@@ -1159,8 +932,8 @@ function MonthlyOpsCostsView({ expenses, setExpenses }) {
     try {
       const updated = await db.saveMonthlyOpsCosts(ym, vals);
       setExpenses(es => [...es.filter(e => !(e.opsAuto && e.date?.slice(0,7) === ym)), ...updated]);
-      alert("Monthly overheads synchronized!");
-    } catch (err) { alert(err.message); }
+      notify("Monthly overheads synchronized!");
+    } catch (err) { notify(err.message); }
   }
 
   return (
@@ -1487,7 +1260,7 @@ function CapitalProjectsView({ bankTxns, capitalProjects, setCapitalProjects }) 
   }
 
   async function save() {
-    if (!f.vendorName || !f.totalCost) return alert("Vendor and total cost required.");
+    if (!f.vendorName || !f.totalCost) return notify("Vendor and total cost required.");
     try {
       const payload = editingId ? { ...f, id: editingId } : f;
       const row = await db.saveCapitalProject(payload);
@@ -1497,13 +1270,13 @@ function CapitalProjectsView({ bankTxns, capitalProjects, setCapitalProjects }) 
         setCapitalProjects(ps => [{ ...row, payments: [], paid: 0, due: row.totalCost }, ...ps]);
       }
       setOpen(false); setF(blank); setEditingId(null);
-    } catch (err) { alert(err.message); }
+    } catch (err) { notify(err.message); }
   }
 
   async function remove(id) {
     if (!confirm("Delete this capital project and all its linked payments? This cannot be undone.")) return;
     try { await db.deleteCapitalProject(id); setCapitalProjects(ps => ps.filter(p => p.id !== id)); }
-    catch (err) { alert(err.message); }
+    catch (err) { notify(err.message); }
   }
 
   function recompute(p) {
@@ -1512,12 +1285,12 @@ function CapitalProjectsView({ bankTxns, capitalProjects, setCapitalProjects }) 
   }
 
   async function addPayment(project, data) {
-    if (!data.amount) return alert("Amount is required.");
+    if (!data.amount) return notify("Amount is required.");
     try {
       const p = await db.addCapitalProjectPayment(project.id, data);
       setCapitalProjects(ps => ps.map(x => x.id === project.id ? recompute({ ...x, payments: [p, ...(x.payments || [])] }) : x));
       setPaymentModalFor(null);
-    } catch (err) { alert(err.message); }
+    } catch (err) { notify(err.message); }
   }
 
   async function removePayment(project, paymentId) {
@@ -1525,7 +1298,7 @@ function CapitalProjectsView({ bankTxns, capitalProjects, setCapitalProjects }) 
     try {
       await db.deleteCapitalProjectPayment(paymentId);
       setCapitalProjects(ps => ps.map(x => x.id === project.id ? recompute({ ...x, payments: (x.payments || []).filter(p => p.id !== paymentId) }) : x));
-    } catch (err) { alert(err.message); }
+    } catch (err) { notify(err.message); }
   }
 
   async function linkBankTxn(project, txn) {
@@ -1767,7 +1540,7 @@ function BankStatementGroupingView({ bankBatches, setBankBatches, bankTxns, setB
         const parsedSheet = await parsePdfStatement(file);
         setSheet(parsedSheet);
         setMap({ dateCol: "Date", descCol: "Narration", mode: "separate", debitCol: "Withdrawal Amt", creditCol: "Deposit Amt", amountCol: "" });
-      } catch (err) { alert("PDF Error: " + err.message); }
+      } catch (err) { notify("PDF Error: " + err.message); }
       return;
     }
 
@@ -1787,13 +1560,13 @@ function BankStatementGroupingView({ bankBatches, setBankBatches, bankTxns, setB
           creditCol: guessCol(headers, ["credit", "deposit"]),
           amountCol: guessCol(headers, ["amount"]),
         });
-      } catch (err) { alert("File read error: " + err.message); }
+      } catch (err) { notify("File read error: " + err.message); }
     };
     reader.readAsArrayBuffer(file);
   }
 
   async function importRows() {
-    if (!sheet || !map.dateCol || !map.descCol) return alert("Select required mapping columns");
+    if (!sheet || !map.dateCol || !map.descCol) return notify("Select required mapping columns");
     const parsed = sheet.rows.map(r => {
       const date = parseBankDate(r[map.dateCol]);
       const description = String(r[map.descCol] || "").trim();
@@ -1813,8 +1586,8 @@ function BankStatementGroupingView({ bankBatches, setBankBatches, bankTxns, setB
       setBankBatches(bs => [res.batch, ...bs]);
       setBankTxns(txs => [...txs, ...res.txns]);
       setSheet(null);
-      alert(`Imported ${res.txns.length} transactions and synchronized with Supabase!`);
-    } catch (err) { alert(err.message); }
+      notify(`Imported ${res.txns.length} transactions and synchronized with Supabase!`);
+    } catch (err) { notify(err.message); }
   }
 
   async function updateLabel(rawKeys, patch) {
@@ -1832,15 +1605,15 @@ function BankStatementGroupingView({ bankBatches, setBankBatches, bankTxns, setB
       // useCounterpartyGroups) — so the label change shows up there immediately,
       // and a transaction is never double-counted once as a live bank row and
       // again as a persisted manual entry with the same amount.
-    } catch (err) { alert(err.message); }
+    } catch (err) { notify(err.message); }
   }
 
   async function logCashbook(t, partnerName, type, accountType) {
     try {
       const entry = await db.logPartnerCashbookEntry(t, partnerName, type, accountType);
       setPartnerCashbook(cb => [entry, ...cb]);
-      alert(`Logged ${type} of ${fmt(entry.amount)} for ${partnerName}`);
-    } catch (err) { alert(err.message); }
+      notify(`Logged ${type} of ${fmt(entry.amount)} for ${partnerName}`);
+    } catch (err) { notify(err.message); }
   }
 
   const groups = useMemo(() => {
@@ -2075,11 +1848,11 @@ function LoansView({ bankTxns, bankLabels, partnerCashbook, loanEntries, setLoan
       const row = await loansdb.saveLoanEntry(data);
       setLoanEntries(es => [row, ...es]);
       return true;
-    } catch (err) { alert(err.message); return false; }
+    } catch (err) { notify(err.message); return false; }
   }
 
   async function markReceipt(txn, lender) {
-    if (!(lender || "").trim()) return alert("Enter the lender's name first.");
+    if (!(lender || "").trim()) return notify("Enter the lender's name first.");
     return addEntry({ date: txn.date, kind: "received", lender, amount: txn.credit, bankTxnId: txn.id, note: txn.description });
   }
 
@@ -2091,9 +1864,9 @@ function LoansView({ bankTxns, bankLabels, partnerCashbook, loanEntries, setLoan
   }
 
   async function saveEdit(e, d) {
-    if (!d.lender.trim()) return alert("Enter the lender's name.");
-    if (!(+d.amount > 0)) return alert("Enter an amount greater than zero.");
-    if (e.kind === "direct" && !d.vendorName.trim()) return alert("Enter the vendor who was paid.");
+    if (!d.lender.trim()) return notify("Enter the lender's name.");
+    if (!(+d.amount > 0)) return notify("Enter an amount greater than zero.");
+    if (e.kind === "direct" && !d.vendorName.trim()) return notify("Enter the vendor who was paid.");
     try {
       let projectId = e.projectId, payId = e.projectPaymentId;
       if (e.kind === "direct") {
@@ -2119,13 +1892,13 @@ function LoansView({ bankTxns, bankLabels, partnerCashbook, loanEntries, setLoan
       const row = await loansdb.updateLoanEntry(e.id, { ...d, projectId, projectPaymentId: payId });
       setLoanEntries(es => es.map(x => x.id === e.id ? row : x));
       setEditing(null);
-    } catch (err) { alert(err.message); }
+    } catch (err) { notify(err.message); }
   }
 
   async function saveDirect(d) {
-    if (!d.lender.trim()) return alert("Enter the lender's name.");
-    if (!d.vendorName.trim()) return alert("Enter the vendor who was paid.");
-    if (!(+d.amount > 0)) return alert("Enter an amount greater than zero.");
+    if (!d.lender.trim()) return notify("Enter the lender's name.");
+    if (!d.vendorName.trim()) return notify("Enter the vendor who was paid.");
+    if (!(+d.amount > 0)) return notify("Enter an amount greater than zero.");
     const project = d.projectId ? (vendorProjects || []).find(p => String(p.id) === d.projectId) : null;
     try {
       let pay = null;
@@ -2138,12 +1911,12 @@ function LoansView({ bankTxns, bankLabels, partnerCashbook, loanEntries, setLoan
       }
       const ok = await addEntry({ date: d.date, kind: "direct", lender: d.lender, amount: d.amount, vendorName: d.vendorName, projectId: project ? project.id : null, projectPaymentId: pay ? pay.id : null, note: d.note });
       if (ok) setModal(null);
-    } catch (err) { alert(err.message); }
+    } catch (err) { notify(err.message); }
   }
 
   async function saveRepayment(d) {
-    if (!d.lender.trim()) return alert("Enter the lender's name.");
-    if (!(+d.amount > 0)) return alert("Enter an amount greater than zero.");
+    if (!d.lender.trim()) return notify("Enter the lender's name.");
+    if (!(+d.amount > 0)) return notify("Enter an amount greater than zero.");
     if (await addEntry({ date: d.date, kind: "repayment", lender: d.lender, amount: d.amount, note: d.note })) setModal(null);
   }
 
@@ -2157,7 +1930,7 @@ function LoansView({ bankTxns, bankLabels, partnerCashbook, loanEntries, setLoan
       }
       await loansdb.deleteLoanEntry(e.id);
       setLoanEntries(es => es.filter(x => x.id !== e.id));
-    } catch (err) { alert(err.message); }
+    } catch (err) { notify(err.message); }
   }
 
   const ledger = [...(loanEntries || [])].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
@@ -2167,7 +1940,7 @@ function LoansView({ bankTxns, bankLabels, partnerCashbook, loanEntries, setLoan
       {!ready && (
         <div style={{ background: "var(--bg3)", border: "1px solid var(--amber)", borderRadius: "var(--r)", padding: 14, marginBottom: 16, fontSize: 12.5 }}>
           <div style={{ fontWeight: 700, marginBottom: 4 }}>One-time setup: create the loans table</div>
-          Run this in the Supabase SQL editor, then refresh the app. If your other tables use row-level-security policies, add the same policy to <span className="mono">loan_entries</span>.
+          Run this in the Supabase SQL editor, then refresh the app. The last line applies the same sign-in rules as the other tables.
           <pre className="mono" style={{ margin: "8px 0 0", whiteSpace: "pre-wrap", fontSize: 11 }}>{loansdb.LOANS_SETUP_SQL}</pre>
           {loanStatus?.error && <div className="mono" style={{ color: "var(--text3)", fontSize: 10.5, marginTop: 6 }}>{loanStatus.error}</div>}
         </div>
@@ -2496,8 +2269,8 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPa
   }, [partners, cf.partnerName]);
 
   async function handleDirectCashSubmit() {
-    if (!cf.partnerName || !cf.amount || !cf.description) return alert("Partner name, amount, and description are required.");
-    if (!cf.vendorName) return alert("Paid To / Vendor is required so this can be grouped correctly.");
+    if (!cf.partnerName || !cf.amount || !cf.description) return notify("Partner name, amount, and description are required.");
+    if (!cf.vendorName) return notify("Paid To / Vendor is required so this can be grouped correctly.");
     try {
       const res = await db.recordPartnerDirectCashExpense(cf.partnerName, cf.date, cf.category, cf.amount, cf.description, cf.ref, cf.isCapex, cf.vendorName);
       setPartnerCashbook(prev => [res.cashbookEntry, ...(prev || [])]);
@@ -2505,13 +2278,13 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPa
       else setExpenses(prev => [res.item, ...(prev || [])]);
       setOpenCashModal(false);
       setCf({ partnerName: partners[0] || "", date: today(), amount: "", isCapex: false, category: "machinery", vendorName: "", description: "", ref: "" });
-      alert(`Logged ${fmt(cf.amount)} paid by ${cf.partnerName}!`);
-    } catch (err) { alert(err.message); }
+      notify(`Logged ${fmt(cf.amount)} paid by ${cf.partnerName}!`);
+    } catch (err) { notify(err.message); }
   }
 
   const [quickForm, setQuickForm] = useState({ date: today(), amount: "", remarks: "" });
   async function handleQuickActionSubmit() {
-    if (!quickForm.amount) return alert("Amount is required.");
+    if (!quickForm.amount) return notify("Amount is required.");
     try {
       const entry = await db.savePartnerCashbookEntry({
         partnerName: openActionModal.partner,
@@ -2525,14 +2298,14 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPa
       setPartnerCashbook(prev => [entry, ...(prev || [])]);
       setOpenActionModal(null);
       setQuickForm({ date: today(), amount: "", remarks: "" });
-    } catch (err) { alert(err.message); }
+    } catch (err) { notify(err.message); }
   }
 
   const loanForEntry = e => (loanEntries || []).find(l => l.kind === "received" && String(l.bankTxnId) === `cb:${e.id}`);
 
   async function saveTxnEdit(entry, d) {
-    if (!d.partnerName.trim()) return alert("Pick the partner.");
-    if (!(+d.amount > 0)) return alert("Enter an amount greater than zero.");
+    if (!d.partnerName.trim()) return notify("Pick the partner.");
+    if (!(+d.amount > 0)) return notify("Enter an amount greater than zero.");
     try {
       const row = await db.updatePartnerCashbookEntry(entry.id, {
         partnerName: d.partnerName.trim(), entryDate: d.entryDate, accountType: d.accountType, type: d.type,
@@ -2552,7 +2325,7 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPa
         setLoanEntries(es => es.filter(x => x.id !== existing.id));
       }
       setEditingTxn(null);
-    } catch (err) { alert(err.message); }
+    } catch (err) { notify(err.message); }
   }
 
   async function deleteTxn(entry) {
@@ -2563,7 +2336,7 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPa
       if (existing) { await loansdb.deleteLoanEntry(existing.id); setLoanEntries(es => es.filter(x => x.id !== existing.id)); }
       await db.deletePartnerCashbookEntry(entry.id);
       setPartnerCashbook(prev => (prev || []).filter(x => x.id !== entry.id));
-    } catch (err) { alert(err.message); }
+    } catch (err) { notify(err.message); }
   }
 
   const ledgerRows = useMemo(() => {
@@ -2751,7 +2524,7 @@ function PartnersCapitalDashboard({ bankTxns, bankLabels, partnerCashbook, setPa
                   })),
                 fileName: `${selectedPartnerForStmt.name}_capital_account.pdf`,
               })}>📄 Export PDF</button>
-              <button className="btn btn-primary" onClick={() => alert("Partner statement ready to share via WhatsApp!")}>💬 Share via WhatsApp</button>
+              <button className="btn btn-primary" onClick={() => notify("Partner statement ready to share via WhatsApp!")}>💬 Share via WhatsApp</button>
             </div>
           }
         >
@@ -3032,7 +2805,7 @@ function MasterTableView({ title, noun, items, setItems, saveFn, delFn, fields, 
         setItems(xs => [...xs, res]);
       }
       setOpen(false); setF(blank); setEditingId(null);
-    } catch (err) { alert(err.message); }
+    } catch (err) { notify(err.message); }
   }
 
   async function remove(id) {
@@ -3040,7 +2813,7 @@ function MasterTableView({ title, noun, items, setItems, saveFn, delFn, fields, 
     try {
       if (delFn) await delFn(id);
       setItems(xs => xs.filter(x => x.id !== id));
-    } catch (err) { alert(err.message); }
+    } catch (err) { notify(err.message); }
   }
 
   return (
@@ -3316,13 +3089,13 @@ function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, supp
     setFormOpen(true);
   }
   async function saveProject() {
-    if (!f.vendorName.trim() || !f.title.trim()) return alert("Vendor and project name are required.");
+    if (!f.vendorName.trim() || !f.title.trim()) return notify("Vendor and project name are required.");
     try {
       const row = await vpdb.saveVendorProject(f, editingId);
       if (editingId) setProjects(ps => ps.map(p => p.id === editingId ? row : p));
       else setProjects(ps => [row, ...ps]);
       setFormOpen(false); setEditingId(null); setF(blank);
-    } catch (err) { alert(err.message); }
+    } catch (err) { notify(err.message); }
   }
   async function removeProject(p) {
     if (!confirm(`Delete "${p.title}" (${p.projectNo})?\n\nIts ${p.payments.length} payment link(s) are removed. The underlying bank transactions / expenses stay exactly as they are.`)) return;
@@ -3330,13 +3103,13 @@ function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, supp
       await vpdb.deleteVendorProject(p.id);
       setProjects(ps => ps.filter(x => x.id !== p.id));
       setProjectPayments(pp => pp.filter(x => x.projectId !== p.id));
-    } catch (err) { alert(err.message); }
+    } catch (err) { notify(err.message); }
   }
 
   async function linkPayment(project, item, amount) {
     const amt = +amount;
-    if (!(amt > 0)) return alert("Enter an amount greater than zero.");
-    if (amt > item.remaining + EPS) return alert(`Only ${fmt(item.remaining)} of this payment is still unassigned.`);
+    if (!(amt > 0)) return notify("Enter an amount greater than zero.");
+    if (amt > item.remaining + EPS) return notify(`Only ${fmt(item.remaining)} of this payment is still unassigned.`);
     try {
       const row = await vpdb.addProjectPayment({
         projectId: project.id,
@@ -3348,21 +3121,21 @@ function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, supp
       });
       setProjectPayments(pp => [row, ...pp]);
       return true;
-    } catch (err) { alert(err.message); return false; }
+    } catch (err) { notify(err.message); return false; }
   }
   async function addManualPayment(project, data) {
-    if (!(+data.amount > 0)) return alert("Enter an amount greater than zero.");
+    if (!(+data.amount > 0)) return notify("Enter an amount greater than zero.");
     try {
       const row = await vpdb.addProjectPayment({ projectId: project.id, ...data });
       setProjectPayments(pp => [row, ...pp]);
       setManualFor(null);
-    } catch (err) { alert(err.message); }
+    } catch (err) { notify(err.message); }
   }
   // Money the firm paid to someone else on this vendor's behalf: reduces what's owed to the vendor
   // without being linked to (or using up) the original payment, so that payment still counts for its own vendor.
   async function addDeduction(project, d) {
-    if (!(+d.amount > 0)) return alert("Enter an amount greater than zero.");
-    if (!d.vendor.trim()) return alert("Enter who was paid.");
+    if (!(+d.amount > 0)) return notify("Enter an amount greater than zero.");
+    if (!d.vendor.trim()) return notify("Enter who was paid.");
     try {
       const row = await vpdb.addProjectPayment({
         projectId: project.id, amount: +d.amount, date: d.date, paymentMode: "deduction",
@@ -3371,14 +3144,14 @@ function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, supp
       });
       setProjectPayments(pp => [row, ...pp]);
       setDeductFor(null);
-    } catch (err) { alert(err.message); }
+    } catch (err) { notify(err.message); }
   }
   async function unlinkPayment(p) {
     if (!confirm("Remove this payment from the project? The payment itself is not deleted.")) return;
     try {
       await vpdb.deleteProjectPayment(p.id);
       setProjectPayments(pp => pp.filter(x => x.id !== p.id));
-    } catch (err) { alert(err.message); }
+    } catch (err) { notify(err.message); }
   }
 
   // Partners = anyone tagged as an owner on the bank statement + anyone with a cashbook entry.
@@ -3393,9 +3166,9 @@ function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, supp
   // Partner paid a vendor in cash: books the expense (or capex), credits the partner's
   // current account, and links the whole amount to this project in one go.
   async function savePartnerCash(project, d) {
-    if (!d.partnerName) return alert("Pick the partner who paid.");
-    if (!(+d.amount > 0)) return alert("Enter an amount greater than zero.");
-    if (!d.description.trim()) return alert("Add a short description.");
+    if (!d.partnerName) return notify("Pick the partner who paid.");
+    if (!(+d.amount > 0)) return notify("Enter an amount greater than zero.");
+    if (!d.description.trim()) return notify("Add a short description.");
     const isCapex = CAP_CATS.some(c => c.id === project.category);
     try {
       const res = await db.recordPartnerDirectCashExpense(
@@ -3412,13 +3185,13 @@ function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, supp
       });
       setProjectPayments(pp => [row, ...pp]);
       setCashFor(null);
-    } catch (err) { alert(err.message); }
+    } catch (err) { notify(err.message); }
   }
 
   // Fix the vendor on an existing partner-cash entry so it lines up with the project's vendor.
   async function saveItemVendor(item, vendorName) {
     const name = (vendorName || "").trim();
-    if (!name) return alert("Enter the vendor name.");
+    if (!name) return notify("Enter the vendor name.");
     try {
       if (item.sourceType === "expense") {
         await db.setPaidTo("expenses", item.sourceId, name);
@@ -3428,7 +3201,7 @@ function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, supp
         setCapitalItems(cs => cs.map(c => c.id === item.sourceId ? { ...c, paidTo: name } : c));
       }
       setVendorEditItem(null);
-    } catch (err) { alert(err.message); }
+    } catch (err) { notify(err.message); }
   }
 
   const filtered = summarized.filter(p => {
@@ -3498,7 +3271,7 @@ function VendorProjectsView({ bankTxns, bankLabels, expenses, capitalItems, supp
     if (includePlannedExpenses) {
       const plannedResult = await plannedDb.loadPlannedExpenses();
       if (!plannedResult.ready) {
-        alert(`Could not load Planned Expenses for the combined PDF. ${plannedResult.error || "Check the planned_expenses table and Supabase permissions."}`);
+        notify(`Could not load Planned Expenses for the combined PDF. ${plannedResult.error || "Check the planned_expenses table and Supabase permissions."}`);
         return;
       }
       const items = (plannedResult.items || []).filter(x => x.status !== "Cancelled");
